@@ -34,10 +34,10 @@ FUZZY_THRESHOLD = 0.80
 
 @dataclass(frozen=True)
 class Resolution:
-    action: str           # "create" | "update" | "review"
-    key: str              # the key computed for the candidate (source id or natural key)
+    action: str  # "create" | "update" | "review"
+    key: str  # the key computed for the candidate (source id or natural key)
     matched_id: str | None  # id of the existing task this matched, if any
-    reason: str           # human-readable explanation of the decision
+    reason: str  # human-readable explanation of the decision
 
 
 def normalize(text: str | None) -> str:
@@ -61,7 +61,9 @@ def _source_id(task: dict) -> str | None:
     return None
 
 
-def resolve(candidate: dict, existing: Iterable[dict], *, fuzzy_threshold: float = FUZZY_THRESHOLD) -> Resolution:
+def resolve(
+    candidate: dict, existing: Iterable[dict], *, fuzzy_threshold: float = FUZZY_THRESHOLD
+) -> Resolution:
     """Decide whether `candidate` is new, an update, or a review-needed near-duplicate."""
     existing = list(existing)
 
@@ -92,7 +94,9 @@ def resolve(candidate: dict, existing: Iterable[dict], *, fuzzy_threshold: float
                 best_ratio, best = ratio, e
         if best is not None:
             return Resolution(
-                "review", key, best.get("id"),
+                "review",
+                key,
+                best.get("id"),
                 f"possible duplicate: name {best_ratio:.0%} similar with same assignee — needs confirmation",
             )
 

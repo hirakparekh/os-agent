@@ -28,7 +28,7 @@ from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
-from brain import automation, bm25, calendar_tool, profile, store
+from brain import automation, bm25, calendar_tool, mail_timeline, profile, store
 from brain.emailtool import ATTACHMENT_CACHE
 from brain.mail_attachments import process_attachment
 from brain.openrouter import call_openrouter
@@ -61,26 +61,109 @@ MARGIN_DELTA = 2.0
 # what lets this list be aggressive: "dream company" and "off-campus" survive as phrases while the
 # bare tokens they used to leak (`dream`, `company`, `off`, `on`) cannot vote. `on` in particular
 # matched virtually every English email and handed Placements a free point on every one.
-KEYWORD_STOPWORDS = frozenset({
-    "a", "an", "and", "all", "any", "are", "as", "at", "be", "by", "can", "do", "for",
-    "from", "has", "have", "if", "in", "into", "is", "it", "its", "new", "no", "not",
-    "of", "off", "on", "open", "or", "our", "so", "that", "the", "then", "there",
-    "these", "they", "this", "to", "up", "us", "via", "was", "we", "were", "what",
-    "when", "where", "which", "who", "why", "will", "with", "you", "your",
-    # generic-business poison that shows up in real keyword lists
-    "company", "dream", "college", "student", "students", "email", "mail", "link",
-    "form", "team", "update", "details", "information", "please", "kindly", "dear",
-    "regards", "register", "registration",
-})
+KEYWORD_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "all",
+        "any",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "can",
+        "do",
+        "for",
+        "from",
+        "has",
+        "have",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "new",
+        "no",
+        "not",
+        "of",
+        "off",
+        "on",
+        "open",
+        "or",
+        "our",
+        "so",
+        "that",
+        "the",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "to",
+        "up",
+        "us",
+        "via",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "will",
+        "with",
+        "you",
+        "your",
+        # generic-business poison that shows up in real keyword lists
+        "company",
+        "dream",
+        "college",
+        "student",
+        "students",
+        "email",
+        "mail",
+        "link",
+        "form",
+        "team",
+        "update",
+        "details",
+        "information",
+        "please",
+        "kindly",
+        "dear",
+        "regards",
+        "register",
+        "registration",
+    }
+)
 
 # Terms that describe a *recruitment process*. Deliberately excludes bare "placement": the
 # "Training and Placement Cell" is the organiser of nearly every college email — including the
 # yoga-competition one this guardrail exists to get right — so it must not license a brand term.
 PLACEMENT_CONTEXT: tuple[str, ...] = (
-    "drive", "recruit", "recruitment", "recruiter", "hiring", "interview",
-    "internship", "ctc", "lpa", "stipend", "offer letter", "shortlisted",
-    "eligibility", "job description", "on-campus", "off-campus",
-    "campus drive", "career fair",
+    "drive",
+    "recruit",
+    "recruitment",
+    "recruiter",
+    "hiring",
+    "interview",
+    "internship",
+    "ctc",
+    "lpa",
+    "stipend",
+    "offer letter",
+    "shortlisted",
+    "eligibility",
+    "job description",
+    "on-campus",
+    "off-campus",
+    "campus drive",
+    "career fair",
 )
 
 # Brand names that are also ubiquitous products ("Google Form", "Google Meet"). They score only
@@ -102,43 +185,139 @@ DEFAULT_CONFIG = {
     "seeded_categories": ["Lectures & Profs", "Placements", "General College"],
     "category_keywords": {
         "Lectures & Profs": [
-            "lecture", "lectures", "guest lecture", "professor", "faculty",
-            "assignment", "submission", "class", "classes", "syllabus", "course",
-            "curriculum", "lab", "seminar", "tutorial", "instructor", "grade",
-            "marks", "attendance",
+            "lecture",
+            "lectures",
+            "guest lecture",
+            "professor",
+            "faculty",
+            "assignment",
+            "submission",
+            "class",
+            "classes",
+            "syllabus",
+            "course",
+            "curriculum",
+            "lab",
+            "seminar",
+            "tutorial",
+            "instructor",
+            "grade",
+            "marks",
+            "attendance",
         ],
         # NOTE: "training" is deliberately absent — "Training and Placement Cell" is the
         # organiser line of nearly every college email, including non-placement ones.
         "Placements": [
-            "placement", "placements", "placement drive", "campus drive",
-            "off-campus", "on-campus", "pre-placement talk",
-            "internship", "intern", "recruiter", "recruitment", "hiring",
-            "job", "jobs", "career fair", "job description", "offer letter",
-            "ctc", "lpa", "stipend", "package", "dream company", "onboarding",
-            "interview", "hr round", "technical round", "aptitude test",
-            "online assessment", "shortlisted", "eligibility criteria", "resume",
-            "accenture", "honeywell", "epsilon", "tcs", "infosys", "wipro",
-            "cognizant", "capgemini", "deloitte", "hcl", "tech mahindra",
+            "placement",
+            "placements",
+            "placement drive",
+            "campus drive",
+            "off-campus",
+            "on-campus",
+            "pre-placement talk",
+            "internship",
+            "intern",
+            "recruiter",
+            "recruitment",
+            "hiring",
+            "job",
+            "jobs",
+            "career fair",
+            "job description",
+            "offer letter",
+            "ctc",
+            "lpa",
+            "stipend",
+            "package",
+            "dream company",
+            "onboarding",
+            "interview",
+            "hr round",
+            "technical round",
+            "aptitude test",
+            "online assessment",
+            "shortlisted",
+            "eligibility criteria",
+            "resume",
+            "accenture",
+            "honeywell",
+            "epsilon",
+            "tcs",
+            "infosys",
+            "wipro",
+            "cognizant",
+            "capgemini",
+            "deloitte",
+            "hcl",
+            "tech mahindra",
             # conditional — score only alongside a PLACEMENT_CONTEXT term
-            "google", "microsoft", "amazon",
+            "google",
+            "microsoft",
+            "amazon",
         ],
         "General College": [
             # athletics / wellness
-            "sport", "sports", "sports day", "sports meet", "tournament",
-            "championship", "match", "athletics", "athletic", "yoga", "wellness",
-            "fitness", "meditation", "zumba", "marathon", "gym",
+            "sport",
+            "sports",
+            "sports day",
+            "sports meet",
+            "tournament",
+            "championship",
+            "match",
+            "athletics",
+            "athletic",
+            "yoga",
+            "wellness",
+            "fitness",
+            "meditation",
+            "zumba",
+            "marathon",
+            "gym",
             # events / culture
-            "event", "events", "competition", "contest", "quiz", "debate",
-            "hackathon", "fest", "festival", "cultural", "celebration",
-            "celebrations", "annual day", "dance", "music", "drama",
-            "prize distribution", "trip", "excursion",
+            "event",
+            "events",
+            "competition",
+            "contest",
+            "quiz",
+            "debate",
+            "hackathon",
+            "fest",
+            "festival",
+            "cultural",
+            "celebration",
+            "celebrations",
+            "annual day",
+            "dance",
+            "music",
+            "drama",
+            "prize distribution",
+            "trip",
+            "excursion",
             # student life / bodies
-            "workshop", "club", "clubs", "society", "student council", "chapter",
-            "ncc", "nss", "blood donation", "volunteer", "volunteers",
-            "alumni meet", "farewell", "freshers", "orientation", "induction",
+            "workshop",
+            "club",
+            "clubs",
+            "society",
+            "student council",
+            "chapter",
+            "ncc",
+            "nss",
+            "blood donation",
+            "volunteer",
+            "volunteers",
+            "alumni meet",
+            "farewell",
+            "freshers",
+            "orientation",
+            "induction",
             "convocation",
             # admin notices
-            "exam", "exams", "schedule", "timetable", "holiday", "notice",
+            "exam",
+            "exams",
+            "schedule",
+            "timetable",
+            "holiday",
+            "notice",
         ],
     },
     # A negative phrase in the SUBJECT vetoes that category outright ("Yoga Competition" is
@@ -146,10 +325,23 @@ DEFAULT_CONFIG = {
     # genuine placement drive that mentions the NSS office in a footer isn't thrown out.
     "category_negative_keywords": {
         "Placements": [
-            "yoga", "meditation", "zumba", "sports day", "sports meet",
-            "annual day", "cultural fest", "farewell", "freshers",
-            "blood donation", "ncc", "nss", "convocation", "marathon",
-            "prize distribution", "republic day", "independence day",
+            "yoga",
+            "meditation",
+            "zumba",
+            "sports day",
+            "sports meet",
+            "annual day",
+            "cultural fest",
+            "farewell",
+            "freshers",
+            "blood donation",
+            "ncc",
+            "nss",
+            "convocation",
+            "marathon",
+            "prize distribution",
+            "republic day",
+            "independence day",
         ],
     },
     "conditional_keywords": {k: list(v) for k, v in DEFAULT_CONDITIONAL_KEYWORDS.items()},
@@ -326,9 +518,7 @@ def sender_precedent(conn: Any, sender: str) -> str | None:
         category = classification.get("category")
         if not category:
             continue
-        votes[category] += (
-            CORRECTION_WEIGHT if classification.get("corrected_by_user") else 1
-        )
+        votes[category] += CORRECTION_WEIGHT if classification.get("corrected_by_user") else 1
     return votes.most_common(1)[0][0] if votes else None
 
 
@@ -431,16 +621,10 @@ def classify_email(
 ) -> dict[str, Any]:
     """LLM call: which category + topic does this email belong to (existing or new)?"""
     cat_lines = (
-        "\n".join(
-            f"- {c['title']}: {c.get('summary', '')}" for c in categories
-        )
-        or "(none yet)"
+        "\n".join(f"- {c['title']}: {c.get('summary', '')}" for c in categories) or "(none yet)"
     )
     findings_text = (
-        "\n".join(
-            f"- {f['file']} ({f['kind']}): {f['finding']}"
-            for f in attachment_findings
-        )
+        "\n".join(f"- {f['file']} ({f['kind']}): {f['finding']}" for f in attachment_findings)
         or "(none)"
     )
     prompt = (
@@ -483,16 +667,11 @@ def merge_or_create_thread(
     call, since the model already has the full email in front of it — extract whether this
     email describes a concrete, dated event worth adding to the user's calendar."""
     thread_lines = (
-        "\n".join(
-            f"- id={t['id']}: {t.get('summary', '')}" for t in existing_threads
-        )
+        "\n".join(f"- id={t['id']}: {t.get('summary', '')}" for t in existing_threads)
         or "(none yet)"
     )
     findings_text = (
-        "\n".join(
-            f"- {f['file']} ({f['kind']}): {f['finding']}"
-            for f in attachment_findings
-        )
+        "\n".join(f"- {f['file']} ({f['kind']}): {f['finding']}" for f in attachment_findings)
         or "(none)"
     )
     prompt = (
@@ -508,6 +687,8 @@ def merge_or_create_thread(
         "Separately, decide whether this email describes something happening at a specific, "
         "concrete date/time — an interview, exam, meeting, deadline, competition, festival, "
         "or similar — as opposed to a vague or ongoing topic with no fixed occurrence. "
+        'Its kind is "deadline" when it\'s something the reader must do or submit by that date '
+        '(a form, fee, registration, assignment, application), otherwise "event". '
         f"REFERENCE DATE (when this email was sent, for resolving 'tomorrow'/'this Friday'): "
         f"{_reference_date(email)}.\n\n"
         f"EXISTING NODES IN THIS TOPIC:\n{thread_lines}\n\n"
@@ -517,7 +698,8 @@ def merge_or_create_thread(
         "Reply with ONLY this JSON object, nothing else:\n"
         '{"action": "merge"|"new", "merge_into_id": "<id or null>", '
         '"summary": "<routing digest, <=120 words>", "body": "<full content>", '
-        '"event": {"has_event": true|false, "title": "<short event title, or empty>", '
+        '"event": {"has_event": true|false, "kind": "deadline"|"event", '
+        '"title": "<short event title, or empty>", '
         '"start": "<YYYY-MM-DD, or YYYY-MM-DDTHH:MM:SS if a specific time is given; '
         'empty if has_event is false>", '
         '"end": "<same format, or empty to default to start + 1 hour>", '
@@ -827,6 +1009,7 @@ def rescan_attachments(conn: Any, config: dict[str, Any]) -> list[dict[str, Any]
         paths = cached_attachments_for([str(u) for u in (data.get("source_uids") or [])])
         if not paths:
             continue
+
         # Compare the whole finding, not just the identifier hits: a file can go from
         # "attachment not parsed" to a fully transcribed menu without ever naming the user,
         # and that is exactly the change worth persisting.
@@ -1022,8 +1205,7 @@ def _ingest_message(
         t
         for t in store.all_of_type(conn, "mail_thread")
         if any(
-            n["id"] == topic_id
-            for n in store.neighbors(conn, t["id"], "contains", incoming=True)
+            n["id"] == topic_id for n in store.neighbors(conn, t["id"], "contains", incoming=True)
         )
     ]
     duplicate_thread = _find_duplicate_thread(message.get("body_text", "") or "", existing_threads)
@@ -1107,6 +1289,18 @@ def _ingest_message(
     action_items = prior_action_items + [
         item for item in new_action_items if item["text"].lower() not in seen_texts
     ]
+    # A thread from before dates were recorded gets its earlier emails stamped with the row's
+    # created_at, so first_received stays roughly right instead of jumping to this email.
+    prior_received = (existing_thread or {}).get("data", {}).get("received_at")
+    if prior_received is None and existing_thread and existing_thread.get("created_at"):
+        prior_received = {
+            u: existing_thread["created_at"] for u in existing_thread["data"].get("source_uids", [])
+        }
+    received_at = mail_timeline.merge_received(prior_received, message["uid"], message.get("date"))
+    events = mail_timeline.merge_events(
+        mail_timeline.thread_timeline(existing_thread)["events"] if existing_thread else [],
+        mail_timeline.normalize_event(decision.get("event"), message["uid"]),
+    )
 
     store.upsert(
         conn,
@@ -1134,6 +1328,9 @@ def _ingest_message(
             # to-do list (GET /api/action-items) — both computed with zero LLM cost.
             "urgent": urgent,
             "action_items": action_items,
+            # When each email arrived, and the dates they mention — see brain/mail_timeline.py.
+            "received_at": received_at,
+            "events": events,
             # Provenance for the UI and for debugging a wrong call: what each half of the
             # classifier thought, and how sure the combination was.
             "classification": {
@@ -1198,7 +1395,10 @@ def fetch_unread_emails(
         cmd += ["--user-id", str(user_id)]
     proc = subprocess.run(
         cmd,
-        capture_output=True, text=True, encoding="utf-8", timeout=600,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=600,
     )
     if proc.returncode != 0:
         raise SystemExit(f"emailtool.py list failed: {proc.stderr.strip()}")
@@ -1212,7 +1412,10 @@ def mark_email_read(uid: str, user_id: str | int | None = None) -> None:
         cmd += ["--user-id", str(user_id)]
     proc = subprocess.run(
         cmd,
-        capture_output=True, text=True, encoding="utf-8", timeout=60,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
     )
     if proc.returncode != 0:
         raise SystemExit(f"emailtool.py mark-read failed: {proc.stderr.strip()}")
@@ -1251,8 +1454,13 @@ def run_iter(
         except (Exception, SystemExit) as exc:  # one bad email must not stop the whole run
             result = {"uid": email.get("uid"), "error": str(exc)}
             results.append(result)
-            yield {"stage": "ingested", "done": index, "total": total, "subject": subject,
-                   "error": str(exc)}
+            yield {
+                "stage": "ingested",
+                "done": index,
+                "total": total,
+                "subject": subject,
+                "error": str(exc),
+            }
             continue
         results.append(result)
         yield {
@@ -1301,10 +1509,7 @@ def main() -> None:
             print(f"[error] uid {result['uid']}: {result['error']}")
         else:
             tid = result["thread_id"]
-            print(
-                f"[{result['action']}] {result['category']} / "
-                f"{result['topic']} -> {tid}"
-            )
+            print(f"[{result['action']}] {result['category']} / {result['topic']} -> {tid}")
 
 
 if __name__ == "__main__":

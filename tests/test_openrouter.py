@@ -15,8 +15,10 @@ def _set_keys(monkeypatch, keys="k1,k2", model="test-model"):
 def test_call_openrouter_returns_content(monkeypatch):
     _set_keys(monkeypatch, keys="k1")
     responses.add(
-        responses.POST, openrouter.OPENROUTER_URL,
-        json={"choices": [{"message": {"content": "hello"}}]}, status=200,
+        responses.POST,
+        openrouter.OPENROUTER_URL,
+        json={"choices": [{"message": {"content": "hello"}}]},
+        status=200,
     )
     assert openrouter.call_openrouter("hi") == "hello"
 
@@ -26,8 +28,10 @@ def test_call_openrouter_rotates_on_429(monkeypatch):
     _set_keys(monkeypatch, keys="bad,good")
     responses.add(responses.POST, openrouter.OPENROUTER_URL, status=429)
     responses.add(
-        responses.POST, openrouter.OPENROUTER_URL,
-        json={"choices": [{"message": {"content": "ok"}}]}, status=200,
+        responses.POST,
+        openrouter.OPENROUTER_URL,
+        json={"choices": [{"message": {"content": "ok"}}]},
+        status=200,
     )
     assert openrouter.call_openrouter("hi") == "ok"
     assert len(responses.calls) == 2
@@ -56,12 +60,16 @@ def test_call_openrouter_rotates_on_200_with_no_choices(monkeypatch):
     # error instead of the normal choices payload — must not raise a bare KeyError.
     _set_keys(monkeypatch, keys="bad,good")
     responses.add(
-        responses.POST, openrouter.OPENROUTER_URL,
-        json={"error": {"message": "upstream provider error"}}, status=200,
+        responses.POST,
+        openrouter.OPENROUTER_URL,
+        json={"error": {"message": "upstream provider error"}},
+        status=200,
     )
     responses.add(
-        responses.POST, openrouter.OPENROUTER_URL,
-        json={"choices": [{"message": {"content": "ok"}}]}, status=200,
+        responses.POST,
+        openrouter.OPENROUTER_URL,
+        json={"choices": [{"message": {"content": "ok"}}]},
+        status=200,
     )
     assert openrouter.call_openrouter("hi") == "ok"
     assert len(responses.calls) == 2
@@ -71,8 +79,10 @@ def test_call_openrouter_rotates_on_200_with_no_choices(monkeypatch):
 def test_call_openrouter_all_keys_return_no_choices_raises_with_detail(monkeypatch):
     _set_keys(monkeypatch, keys="k1")
     responses.add(
-        responses.POST, openrouter.OPENROUTER_URL,
-        json={"error": {"message": "upstream provider error"}}, status=200,
+        responses.POST,
+        openrouter.OPENROUTER_URL,
+        json={"error": {"message": "upstream provider error"}},
+        status=200,
     )
     with pytest.raises(SystemExit, match="unexpected response shape"):
         openrouter.call_openrouter("hi")
@@ -83,12 +93,16 @@ def test_call_openrouter_rotates_on_null_content(monkeypatch):
     # Seen in practice: some free-tier models return content: null instead of text.
     _set_keys(monkeypatch, keys="bad,good")
     responses.add(
-        responses.POST, openrouter.OPENROUTER_URL,
-        json={"choices": [{"message": {"content": None}}]}, status=200,
+        responses.POST,
+        openrouter.OPENROUTER_URL,
+        json={"choices": [{"message": {"content": None}}]},
+        status=200,
     )
     responses.add(
-        responses.POST, openrouter.OPENROUTER_URL,
-        json={"choices": [{"message": {"content": "ok"}}]}, status=200,
+        responses.POST,
+        openrouter.OPENROUTER_URL,
+        json={"choices": [{"message": {"content": "ok"}}]},
+        status=200,
     )
     assert openrouter.call_openrouter("hi") == "ok"
     assert len(responses.calls) == 2

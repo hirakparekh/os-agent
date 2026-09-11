@@ -27,6 +27,11 @@ class Settings:
     # The brain service (brain/viz_server.py) — chat.py proxies mail Q&A there, forwarding the
     # same bearer token this request carried (see console/backend/chat.py).
     brain_api_base_url: str
+    # Sarvam AI (voice STT/TTS, console/backend/voice.py). Server-side only — never sent to
+    # the browser.
+    sarvam_api_key: str | None = None
+    # Overridden only by the e2e suite, to point at e2e/support/fake_sarvam.py.
+    sarvam_base_url: str = "https://api.sarvam.ai"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -39,6 +44,8 @@ class Settings:
             database_url=os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL),
             secret_key=os.environ.get("OPS_SECRET_KEY", "dev-secret-change-me"),
             brain_api_base_url=os.environ.get("BRAIN_API_BASE_URL", "http://localhost:8080"),
+            sarvam_api_key=os.environ.get("SARVAM_API_KEY"),
+            sarvam_base_url=os.environ.get("SARVAM_BASE_URL", "https://api.sarvam.ai"),
         )
 
 

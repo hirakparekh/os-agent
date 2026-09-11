@@ -38,9 +38,8 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers)
-  headers.set("Content-Type", "application/json")
   const token = getToken()
   if (token) headers.set("Authorization", `Bearer ${token}`)
 
@@ -53,7 +52,26 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const detail = await res.text()
     throw new ApiError(res.status, detail || res.statusText)
   }
+  return res
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers)
+  headers.set("Content-Type", "application/json")
+  const res = await authedFetch(path, { ...init, headers })
   return (await res.json()) as T
+}
+
+/** FastAPI errors arrive as `{"detail": "..."}` text in ApiError.message — unwrap for display. */
+export function errorDetail(err: unknown): string {
+  if (!(err instanceof Error)) return "Something went wrong."
+  try {
+    const parsed = JSON.parse(err.message) as { detail?: unknown }
+    if (typeof parsed.detail === "string") return parsed.detail
+  } catch {
+    // Not JSON — fall through to the raw message.
+  }
+  return err.message
 }
 
 export async function login(email: string, password: string): Promise<string> {
@@ -214,6 +232,57 @@ export function postChatMessage(
     method: "POST",
     body: JSON.stringify({ question, profile_details: profileDetails }),
   })
+}
+
+// ===========================================================================
+// Voice — Sarvam AI speech-to-text / text-to-speech, proxied by console/backend/voice.py so
+// the Sarvam key never reaches the browser.
+// ===========================================================================
+
+export interface VoiceOptions {
+  configured: boolean
+  languages: string[]
+  speakers: string[]
+  default_language: string
+  default_speaker: string
+}
+
+export async function getVoiceOptions(): Promise<VoiceOptions> {
+  if (DEMO_MODE) {
+    return {
+      configured: false,
+      languages: ["en-IN"],
+      speakers: ["shubh"],
+      default_language: "en-IN",
+      default_speaker: "shubh",
+    }
+  }
+  return request<VoiceOptions>("/voice/options")
+}
+
+export async function transcribeAudio(
+  audio: Blob,
+  languageCode: string,
+): Promise<{ transcript: string; language_code: string | null }> {
+  const ext = audio.type.includes("mp4") ? "m4a" : audio.type.includes("ogg") ? "ogg" : "webm"
+  const form = new FormData()
+  form.append("file", audio, `recording.${ext}`)
+  form.append("language_code", languageCode)
+  const res = await authedFetch("/voice/transcribe", { method: "POST", body: form })
+  return (await res.json()) as { transcript: string; language_code: string | null }
+}
+
+export async function synthesizeSpeech(
+  text: string,
+  languageCode: string,
+  speaker: string,
+): Promise<Blob> {
+  const res = await authedFetch("/voice/speak", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, language_code: languageCode, speaker }),
+  })
+  return res.blob()
 }
 
 

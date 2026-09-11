@@ -76,6 +76,12 @@ Per message: parse attachments → classify → decide merge/new/duplicate → s
 - **Duplicate suppression**: near-identical body text (difflib ≥ 0.85) collapses into the
   existing thread instead of creating a second one.
 - **Urgency and action items** are deterministic keyword/regex passes — no LLM, no cost.
+- **Dates** (`brain/mail_timeline.py`): each thread records `received_at` — every source message's own Date header, keyed by uid, no LLM — and `events`, the deadlines and dates
+  the existing merge/place model call already extracts, kept now even when Calendar is not
+  connected. Dates are thread *attributes*, never a level of the tree: the console's "By
+  time" view regroups the same thread nodes client-side. Threads ingested before this fall
+  back to `created_at`, marked approximate, so no migration was needed. Overdue / due-soon /
+  upcoming is derived from today on every read, never stored.
 - **Attachments**: Excel/CSV/PDF/DOCX parsed locally; images via local OCR, falling back to a
   vision model only if Tesseract is absent.
 

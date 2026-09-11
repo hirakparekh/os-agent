@@ -91,7 +91,9 @@ export function Profile() {
     <Card className="max-w-lg">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <UserCircle2 className="h-5 w-5 text-muted-foreground" />
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-primary">
+            <UserCircle2 className="h-4 w-4" />
+          </span>
           About you
           {saving && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
         </CardTitle>
@@ -106,13 +108,16 @@ export function Profile() {
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : details.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
+          <p className="rounded-lg bg-muted/60 px-3 py-4 text-center text-sm text-muted-foreground">
             You haven't added anything yet — try "Name", "Roll no", or "Timezone" below.
           </p>
         ) : (
           <ul className="flex flex-col divide-y divide-border">
             {details.map((d) => (
-              <li key={d.id} className="flex items-center justify-between gap-3 py-2.5">
+              <li
+                key={d.id}
+                className="group flex items-center justify-between gap-3 py-2.5 animate-fade-up"
+              >
                 <div className="flex min-w-0 flex-col">
                   <span className="text-sm font-medium">{d.key}</span>
                   <span className="truncate text-sm text-muted-foreground">{d.value}</span>
@@ -122,6 +127,7 @@ export function Profile() {
                   variant="ghost"
                   onClick={() => removeDetail(d.id)}
                   aria-label={`Remove ${d.key}`}
+                  className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
@@ -130,7 +136,7 @@ export function Profile() {
           </ul>
         )}
 
-        <div className="flex flex-col gap-2 rounded-lg border border-dashed border-input p-3">
+        <div className="flex flex-col gap-2 rounded-lg border border-dashed border-input p-3 transition-colors focus-within:border-primary/40 focus-within:bg-accent/30">
           <div className="flex gap-2">
             <Input
               value={newKey}

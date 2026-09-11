@@ -65,7 +65,10 @@ def test_endpoints_require_authentication():
 def test_review_lists_only_low_confidence_threads(client, conn):
     topic = mail_ingest.ensure_topic(conn, "Placements", "Yoga Competition")
     _thread(
-        conn, "mail:thread:1", "Yoga Competition 2026", topic,
+        conn,
+        "mail:thread:1",
+        "Yoga Competition 2026",
+        topic,
         needs_review=True,
         classification={"llm_category": "Placements", "keyword_category": "General College"},
     )
@@ -198,22 +201,40 @@ def _stream_events(res):
 
 def test_reload_stream_emits_progress_per_email(client, monkeypatch):
     emails = [
-        {"uid": "1", "from": "a@b.com", "to": "me@x.com", "subject": "Accenture drive",
-         "body_text": "...", "attachments": []},
-        {"uid": "2", "from": "a@b.com", "to": "me@x.com", "subject": "Yoga day",
-         "body_text": "...", "attachments": []},
+        {
+            "uid": "1",
+            "from": "a@b.com",
+            "to": "me@x.com",
+            "subject": "Accenture drive",
+            "body_text": "...",
+            "attachments": [],
+        },
+        {
+            "uid": "2",
+            "from": "a@b.com",
+            "to": "me@x.com",
+            "subject": "Yoga day",
+            "body_text": "...",
+            "attachments": [],
+        },
     ]
     monkeypatch.setattr(
         mail_ingest, "fetch_unread_emails", lambda since_minutes=None, user_id=None: emails
     )
     monkeypatch.setattr(mail_ingest, "mark_email_read", lambda uid, user_id=None: None)
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
-        lambda e, f, c: {"category": "Placements", "new_category": True,
-                         "topic": "T", "new_topic": True},
+        mail_ingest,
+        "classify_email",
+        lambda e, f, c: {
+            "category": "Placements",
+            "new_category": True,
+            "topic": "T",
+            "new_topic": True,
+        },
     )
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda e, f, x: {"action": "new", "merge_into_id": None, "summary": "s", "body": "b"},
     )
 
@@ -232,6 +253,7 @@ def test_reload_stream_emits_progress_per_email(client, monkeypatch):
 def test_reload_stream_reports_failure_as_a_terminal_event(client, monkeypatch):
     """The response is already 200 by the time a mid-stream failure happens, so the error has
     to travel in-band rather than as a status code."""
+
     def _boom(since_minutes=None, user_id=None):
         raise SystemExit("emailtool.py list failed: no mailbox connected")
 

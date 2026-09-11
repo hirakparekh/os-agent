@@ -27,15 +27,24 @@ def run_llm(prompt: str, *, timeout: int = 300) -> str:
         # hermes -z: single prompt in (as an arg), final response text out, nothing else.
         proc = subprocess.run(
             [exe, "-z", prompt],
-            capture_output=True, text=True, encoding="utf-8", timeout=timeout,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=timeout,
         )
     else:
         exe = shutil.which("claude")
         if not exe:
-            raise SystemExit("`claude` not on PATH. Install Claude Code, or set BRAIN_ENGINE=hermes.")
+            raise SystemExit(
+                "`claude` not on PATH. Install Claude Code, or set BRAIN_ENGINE=hermes."
+            )
         proc = subprocess.run(
             [exe, "-p"],
-            input=prompt, capture_output=True, text=True, encoding="utf-8", timeout=timeout,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=timeout,
         )
 
     if proc.returncode != 0:

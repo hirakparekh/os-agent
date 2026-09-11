@@ -27,6 +27,7 @@ from brain import (
     calendar_tool,
     mail_ask,
     mail_ingest,
+    mail_timeline,
     oauth_flow,
     profile,
     slack_ingest,
@@ -65,13 +66,20 @@ app.add_middleware(
 
 def _mail_children(conn: Any, parent_id: str) -> list[dict[str, Any]]:
     return [
-        n for n in store.neighbors(conn, parent_id, "contains")
+        n
+        for n in store.neighbors(conn, parent_id, "contains")
         if n["type"] in ("mail_category", "mail_topic", "mail_thread")
     ]
 
 
-def _mail_node(conn: Any, node: dict[str, Any]) -> dict[str, Any]:
-    children = [_mail_node(conn, c) for c in _mail_children(conn, node["id"])]
+def _mail_node(
+    conn: Any, node: dict[str, Any], category: str | None = None, topic: str | None = None
+) -> dict[str, Any]:
+    if node["type"] == "mail_category":
+        category = node["title"]
+    elif node["type"] == "mail_topic":
+        topic = node["title"]
+    children = [_mail_node(conn, c, category, topic) for c in _mail_children(conn, node["id"])]
     out: dict[str, Any] = {
         "id": node["id"],
         "name": node["title"],
@@ -86,6 +94,11 @@ def _mail_node(conn: Any, node: dict[str, Any]) -> dict[str, Any]:
         out["source_uids"] = node["data"].get("source_uids") or []
         out["classification"] = node["data"].get("classification")
         out["channel"] = node["data"].get("channel", "gmail")
+        # Carried on the thread itself because the console's time view regroups threads by
+        # date, where the category/topic are no longer the thread's ancestors.
+        out["category"] = category
+        out["topic"] = topic
+        out.update(mail_timeline.thread_timeline(node))
     if children:
         out["children"] = children
     return out

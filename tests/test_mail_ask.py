@@ -11,17 +11,28 @@ def _seed_thread(conn, cat_title, topic_title, thread_id, title, summary, body):
     cat_id = f"mail:cat:{cat_title.lower()}"
     topic_id = f"mail:topic:{cat_title.lower()}:{topic_title.lower()}"
     store.upsert(
-        conn, "mail_category", {"source_id": cat_id, "title": cat_title},
-        title=cat_title, summary=f"Mail about {cat_title}.", source="mail",
+        conn,
+        "mail_category",
+        {"source_id": cat_id, "title": cat_title},
+        title=cat_title,
+        summary=f"Mail about {cat_title}.",
+        source="mail",
     )
     store.upsert(
-        conn, "mail_topic", {"source_id": topic_id, "title": topic_title},
-        title=topic_title, summary=f"Mail about {topic_title}.", source="mail",
+        conn,
+        "mail_topic",
+        {"source_id": topic_id, "title": topic_title},
+        title=topic_title,
+        summary=f"Mail about {topic_title}.",
+        source="mail",
     )
     store.upsert(
-        conn, "mail_thread",
+        conn,
+        "mail_thread",
         {"source_id": thread_id, "title": title, "body": body, "source_uids": ["1"]},
-        title=title, summary=summary, source="mail:1",
+        title=title,
+        summary=summary,
+        source="mail:1",
     )
     store.add_edge(conn, cat_id, topic_id, "contains")
     store.add_edge(conn, topic_id, thread_id, "contains")
@@ -41,13 +52,21 @@ def test_ask_mail_empty_tree_returns_canned_message_without_calling_llm(tmp_path
 def test_ask_mail_includes_matching_thread_body_in_prompt(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     _seed_thread(
-        conn, "Placements", "Acme", "mail:thread:1",
-        "Interview Round 1", "Interview scheduled Monday.",
+        conn,
+        "Placements",
+        "Acme",
+        "mail:thread:1",
+        "Interview Round 1",
+        "Interview scheduled Monday.",
         "Please join the interview call on Monday at 10am.",
     )
     _seed_thread(
-        conn, "Lectures", "DBMS", "mail:thread:2",
-        "Assignment 2", "Assignment due Friday.",
+        conn,
+        "Lectures",
+        "DBMS",
+        "mail:thread:2",
+        "Assignment 2",
+        "Assignment due Friday.",
         "Submit assignment 2 by Friday via the portal.",
     )
     captured = {}
@@ -70,8 +89,12 @@ def test_ask_mail_respects_top_k(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     for i in range(12):
         _seed_thread(
-            conn, "Placements", "Acme", f"mail:thread:{i}",
-            f"Interview Round {i}", "Interview scheduled.",
+            conn,
+            "Placements",
+            "Acme",
+            f"mail:thread:{i}",
+            f"Interview Round {i}",
+            "Interview scheduled.",
             "interview interview interview call scheduled",
         )
     captured = {}
