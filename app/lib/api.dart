@@ -6,6 +6,14 @@ import 'package:http/http.dart' as http;
 import 'config.dart';
 import 'models.dart';
 
+/// What `GET /api/mail/review` returns: the threads needing a decision, plus the categories
+/// available to move them into.
+class ReviewQueue {
+  const ReviewQueue({required this.items, required this.categories});
+  final List<ReviewItem> items;
+  final List<String> categories;
+}
+
 class ApiException implements Exception {
   ApiException(this.statusCode, this.message);
   final int statusCode;
@@ -47,12 +55,13 @@ class Api {
     String method,
     Uri url, {
     Object? body,
+    Duration timeout = const Duration(seconds: 30),
   }) async {
     http.Response res;
     try {
       final request = http.Request(method, url)..headers.addAll(_headers);
       if (body != null) request.body = jsonEncode(body);
-      final streamed = await _client.send(request).timeout(const Duration(seconds: 30));
+      final streamed = await _client.send(request).timeout(timeout);
       res = await http.Response.fromStream(streamed);
     } on TimeoutException catch (e) {
       throw OfflineException(e);
@@ -193,6 +202,186 @@ class Api {
         continue;
       }
     }
+  }
+
+  // ------------------------------------------------------------------- chat
+  //
+  // Chat goes through the *console*, not brain: it persists the conversation and proxies the
+  // question to brain's /api/mail/ask with the same bearer token. Calling brain directly would
+  // answer correctly and forget the exchange.
+
+  Future<List<ChatSession>> chatSessions() async {
+    final data = await _send('GET', _console('/chat/sessions'));
+    return (data as List<dynamic>)
+        .map((s) => ChatSession.fromJson(s as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  Future<ChatSession> chatSession(int id) async {
+    final data = await _send('GET', _console('/chat/sessions/$id'));
+    return ChatSession.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<ChatSession> createChatSession() async {
+    final data = await _send('POST', _console('/chat/sessions'));
+    return ChatSession.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<void> deleteChatSession(int id) async {
+    await _send('DELETE', _console('/chat/sessions/$id'));
+  }
+
+  Future<void> renameChatSession(int id, String title) async {
+    await _send('PATCH', _console('/chat/sessions/$id'), body: {'title': title});
+  }
+
+  /// Ask a question in a session. Slow — a model round-trip over the whole mail tree, gated by
+  /// a rate-limited free tier, so it gets a far longer timeout than an ordinary request.
+  Future<ChatMessage> sendChatMessage(int sessionId, String question) async {
+    final data = await _send(
+      'POST',
+      _console('/chat/sessions/$sessionId/messages'),
+      body: {'question': question},
+      timeout: const Duration(minutes: 3),
+    );
+    return ChatMessage.fromJson(data as Map<String, dynamic>);
+  }
+
+  // ------------------------------------------------------------------ review
+
+  Future<ReviewQueue> mailReview() async {
+    final data = await _send('GET', _brain('/api/mail/review')) as Map<String, dynamic>;
+    return ReviewQueue(
+      items: (data['threads'] as List<dynamic>)
+          .map((t) => ReviewItem.fromJson(t as Map<String, dynamic>))
+          .toList(growable: false),
+      categories: ((data['categories'] as List<dynamic>?) ?? const []).cast<String>(),
+    );
+  }
+
+  /// Move a thread to a different category. The server also learns from the correction, so the
+  /// same mistake is less likely next time — which is what makes triage worth doing on a phone
+  /// rather than deferring to a laptop.
+  Future<void> reclassify(String threadId, String category, {String? topic}) async {
+    await _send(
+      'POST',
+      _brain('/api/mail/reclassify'),
+      body: {'thread_id': threadId, 'category': category, if (topic != null) 'topic': topic},
+    );
+  }
+
+  // ------------------------------------------------------- rules & analytics
+
+  Future<List<AutomationRule>> rules() async {
+    final data = await _send('GET', _brain('/api/rules')) as Map<String, dynamic>;
+    return (data['rules'] as List<dynamic>)
+        .map((r) => AutomationRule.fromJson(r as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  /// Create a rule from plain English. The model is called once, here; evaluating the rule
+  /// against future mail is pure code, so rules keep firing even with AI processing switched
+  /// off on the server.
+  Future<AutomationRule> createRule(String text) async {
+    final data = await _send('POST', _brain('/api/rules'), body: {'text': text});
+    return AutomationRule.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<void> deleteRule(String id) async {
+    await _send('DELETE', _brain('/api/rules/$id'));
+  }
+
+  Future<List<VolumePoint>> categoryVolume({String bucket = 'day'}) async {
+    final data = await _send('GET', _brain('/api/analytics/category-volume', {'bucket': bucket}))
+        as Map<String, dynamic>;
+    return (data['points'] as List<dynamic>)
+        .map((p) => VolumePoint.fromJson(p as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  // ---------------------------------------------------------------- settings
+
+  Future<BrainSettings> settings() async {
+    final data = await _send('GET', _brain('/api/settings'));
+    return BrainSettings.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<BrainSettings> setOfflineMode(bool enabled) async {
+    final data = await _send('PUT', _brain('/api/settings'), body: {'offline_mode': enabled});
+    return BrainSettings.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<MailStatus> disconnectGmail() async {
+    final data = await _send('POST', _brain('/api/mail/disconnect'));
+    return MailStatus.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<MailStatus> calendarStatus() async {
+    final data = await _send('GET', _brain('/api/calendar/status'));
+    return MailStatus.fromJson(data as Map<String, dynamic>);
+  }
+
+  Future<String> beginCalendarConnect() async {
+    final data = await _send('POST', _brain('/api/calendar/connect'));
+    return (data as Map<String, dynamic>)['auth_url'] as String;
+  }
+
+  Future<MailStatus> disconnectCalendar() async {
+    final data = await _send('POST', _brain('/api/calendar/disconnect'));
+    return MailStatus.fromJson(data as Map<String, dynamic>);
+  }
+
+  // ------------------------------------------------------------------- voice
+
+  Future<VoiceOptions> voiceOptions() async {
+    try {
+      final data = await _send('GET', _console('/voice/options'));
+      return VoiceOptions.fromJson(data as Map<String, dynamic>);
+    } on ApiException {
+      // A backend without the voice routes is not an error — it just means no voice.
+      return VoiceOptions.off;
+    }
+  }
+
+  /// Upload recorded audio, get text back. Multipart, so it does not go through [_send].
+  Future<String> transcribe(List<int> audio, {required String languageCode}) async {
+    final request = http.MultipartRequest('POST', _console('/voice/transcribe'))
+      ..fields['language_code'] = languageCode
+      ..files.add(http.MultipartFile.fromBytes('file', audio, filename: 'speech.wav'));
+    if (token != null) request.headers['Authorization'] = 'Bearer $token';
+
+    http.Response res;
+    try {
+      res = await http.Response.fromStream(await _client.send(request));
+    } catch (e) {
+      throw OfflineException(e);
+    }
+    if (res.statusCode == 401) throw ApiException(401, 'Signed out. Please log in again.');
+    if (res.statusCode >= 400) throw ApiException(res.statusCode, _describe(res));
+    return (jsonDecode(res.body) as Map<String, dynamic>)['transcript'] as String? ?? '';
+  }
+
+  /// Synthesise speech. Returns WAV bytes for the caller to play.
+  Future<List<int>> speak(
+    String text, {
+    required String languageCode,
+    required String speaker,
+  }) async {
+    final request = http.Request('POST', _console('/voice/speak'))
+      ..headers.addAll(_headers)
+      ..body = jsonEncode({'text': text, 'language_code': languageCode, 'speaker': speaker});
+
+    http.StreamedResponse response;
+    try {
+      response = await _client.send(request);
+    } catch (e) {
+      throw OfflineException(e);
+    }
+    if (response.statusCode == 401) throw ApiException(401, 'Signed out. Please log in again.');
+    if (response.statusCode >= 400) {
+      throw ApiException(response.statusCode, 'Could not read that aloud.');
+    }
+    return response.stream.toBytes();
   }
 
   void close() => _client.close();

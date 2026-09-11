@@ -24,10 +24,17 @@ where this was authored. Expect to fix whatever `flutter analyze` finds on the f
 | Shell, status strip, Gmail connect | `lib/screens/home.dart` | yes |
 | Today feed | `lib/screens/today.dart` | yes |
 | Knowledge tree | `lib/screens/tree.dart` | yes |
-| Thread detail | `lib/screens/thread.dart` | yes |
-| Mail Q&A chat | — | no |
-| Review queue / reclassify | — | no |
-| Push notifications | — | no |
+| Thread detail, with dates | `lib/screens/thread.dart` | yes |
+| Chat, with voice | `lib/screens/chat.dart`, `lib/voice.dart` | yes |
+| Review queue + reclassify | `lib/screens/review.dart` | yes |
+| Insights | `lib/screens/insights.dart` | yes |
+| Automation rules | `lib/screens/rules.dart` | yes |
+| Settings and connections | `lib/screens/settings.dart` | yes |
+| Urgent-mail notifications (polling) | `lib/notifications.dart` | yes |
+| Push that wakes a closed app | — | no, needs FCM |
+| The force-directed mind map | — | deliberately not built |
+
+Decisions and their reasoning live in `docs/app/`.
 
 ## 1. Install Flutter
 
@@ -61,19 +68,25 @@ flutter analyze
 
 ## 3. Let the app reach your machine
 
-Add the internet permission, and — for local development only — allow plain HTTP, since the
-dev backends have no TLS. In `android/app/src/main/AndroidManifest.xml`:
+In `android/app/src/main/AndroidManifest.xml`:
 
 ```xml
 <uses-permission android:name="android.permission.INTERNET"/>
+<!-- Voice: hold-to-speak in chat. Drop this and the two audio packages if voice is cut. -->
+<uses-permission android:name="android.permission.RECORD_AUDIO"/>
+<!-- Android 13+ asks at runtime before any notification is shown. -->
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 <application
     android:usesCleartextTraffic="true"
     ... >
 ```
 
-Drop `usesCleartextTraffic` once the backend is hosted behind HTTPS. Nothing else is needed:
-there is no custom URL scheme and no intent filter anywhere in this project, because Google's
-consent redirect goes to the *server's* callback, never back into the app.
+`usesCleartextTraffic` is for local development only — the dev backends have no TLS. Drop it
+once the backend is hosted behind HTTPS.
+
+Nothing else is needed: there is no custom URL scheme and no intent filter anywhere in this
+project, because Google's consent redirect goes to the *server's* callback, never back into the
+app.
 
 ## 4. Run
 

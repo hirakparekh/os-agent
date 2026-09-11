@@ -66,6 +66,18 @@ class ThreadScreen extends StatelessWidget {
                     ),
                   ),
                 ],
+                if (node.upcomingEvents.isNotEmpty) ...[
+                  const SizedBox(height: 20),
+                  _Block(
+                    label: 'Dates',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: node.upcomingEvents
+                          .map((e) => _EventRow(event: e))
+                          .toList(growable: false),
+                    ),
+                  ),
+                ],
                 if (node.body != null && node.body!.trim().isNotEmpty) ...[
                   const SizedBox(height: 20),
                   _Block(label: 'Message', child: SelectableText(node.body!, style: _bodyStyle)),
@@ -98,6 +110,17 @@ class _Meta extends StatelessWidget {
           node.channel == 'slack' ? 'Slack' : 'Gmail',
           style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
         ),
+        if (node.lastReceived != null) ...[
+          const SizedBox(width: 12),
+          Icon(Icons.schedule, size: 14, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 5),
+          Text(
+            // "~" marks a date inferred from when the thread was stored rather than read off
+            // a Date header — true for anything ingested before dates were recorded.
+            '${node.receivedEstimated ? '~' : ''}${_day(node.lastReceived!)}',
+            style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+          ),
+        ],
         if (node.needsReview) ...[
           const SizedBox(width: 12),
           Icon(Icons.help_outline, size: 14, color: scheme.tertiary),
@@ -207,4 +230,67 @@ class _NotCached extends StatelessWidget {
       ),
     );
   }
+}
+
+/// One dated item, colour-coded by how soon it is.
+class _EventRow extends StatelessWidget {
+  const _EventRow({required this.event});
+
+  final MailEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final colour = switch (event.status) {
+      'overdue' => scheme.error,
+      'soon' => scheme.tertiary,
+      _ => scheme.onSurfaceVariant,
+    };
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 9),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            event.isDeadline ? Icons.flag_outlined : Icons.event_outlined,
+            size: 16,
+            color: colour,
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  event.title ?? (event.isDeadline ? 'Deadline' : 'Event'),
+                  style: const TextStyle(fontSize: 14.5, height: 1.35),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    _day(event.date),
+                    if (event.status == 'overdue') 'overdue',
+                    if (event.status == 'soon') 'soon',
+                  ].join('  ·  '),
+                  style: TextStyle(fontSize: 12.5, color: colour),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Dates arrive as ISO-8601 strings; only the day part is worth showing here.
+String _day(String iso) {
+  final parsed = DateTime.tryParse(iso);
+  if (parsed == null) return iso;
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  return '${parsed.day} ${months[parsed.month - 1]}';
 }

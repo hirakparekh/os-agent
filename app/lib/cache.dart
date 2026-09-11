@@ -89,6 +89,18 @@ class Cache {
     );
   }
 
+  Future<void> saveSessions(List<ChatSession> sessions) =>
+      _write('sessions', sessions.map((s) => s.toJson()).toList(growable: false));
+
+  Future<CachedList<ChatSession>> loadSessions() async {
+    final env = await _read('sessions');
+    if (env == null) return CachedList.empty();
+    final list = (env.payload as List<dynamic>)
+        .map((s) => ChatSession.fromJson(s as Map<String, dynamic>))
+        .toList(growable: false);
+    return CachedList(list, env.fetchedAt);
+  }
+
   Future<void> clear() async {
     if (await _dir.exists()) await _dir.delete(recursive: true);
     await _dir.create(recursive: true);

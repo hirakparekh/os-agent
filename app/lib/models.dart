@@ -109,6 +109,12 @@ class TreeNode {
     this.channel,
     this.needsReview = false,
     this.children = const [],
+    this.category,
+    this.topic,
+    this.firstReceived,
+    this.lastReceived,
+    this.receivedEstimated = false,
+    this.events = const [],
   });
 
   final String id;
@@ -120,7 +126,24 @@ class TreeNode {
   final bool needsReview;
   final List<TreeNode> children;
 
+  // Thread-only. Category and topic ride on the thread itself because the time view regroups
+  // threads by date, where they are no longer the thread's ancestors.
+  final String? category;
+  final String? topic;
+  final String? firstReceived;
+  final String? lastReceived;
+
+  /// The received dates were inferred from when the thread was stored, not from a Date header
+  /// — true for threads ingested before dates were recorded.
+  final bool receivedEstimated;
+  final List<MailEvent> events;
+
   bool get isThread => type == 'mail_thread';
+
+  /// Dated items still ahead, soonest first.
+  List<MailEvent> get upcomingEvents =>
+      events.where((e) => e.status != 'past').toList(growable: false)
+        ..sort((a, b) => a.date.compareTo(b.date));
 
   /// Every thread anywhere beneath this node.
   Iterable<TreeNode> get threads sync* {
@@ -150,6 +173,14 @@ class TreeNode {
         body: json['body'] as String?,
         channel: json['channel'] as String?,
         needsReview: json['needs_review'] as bool? ?? false,
+        category: json['category'] as String?,
+        topic: json['topic'] as String?,
+        firstReceived: json['first_received'] as String?,
+        lastReceived: json['last_received'] as String?,
+        receivedEstimated: json['received_estimated'] as bool? ?? false,
+        events: ((json['events'] as List<dynamic>?) ?? const [])
+            .map((e) => MailEvent.fromJson(e as Map<String, dynamic>))
+            .toList(growable: false),
         children: ((json['children'] as List<dynamic>?) ?? const [])
             .map((c) => TreeNode.fromJson(c as Map<String, dynamic>))
             .toList(growable: false),
@@ -163,6 +194,12 @@ class TreeNode {
         'body': body,
         'channel': channel,
         'needs_review': needsReview,
+        'category': category,
+        'topic': topic,
+        'first_received': firstReceived,
+        'last_received': lastReceived,
+        'received_estimated': receivedEstimated,
+        'events': events.map((e) => e.toJson()).toList(growable: false),
         'children': children.map((c) => c.toJson()).toList(growable: false),
       };
 }
@@ -256,5 +293,191 @@ class IngestProgress {
         subject: json['subject'] as String?,
         error: json['error'] as String?,
         processed: json['processed'] as int?,
+      );
+}
+
+/// A date found in a thread — a deadline or an event (`brain/mail_timeline.py`).
+class MailEvent {
+  const MailEvent({required this.date, this.title, this.kind = 'event', this.status});
+
+  final String date;
+  final String? title;
+  final String kind; // deadline | event
+  final String? status; // overdue | soon | upcoming | past
+
+  bool get isDeadline => kind == 'deadline';
+
+  factory MailEvent.fromJson(Map<String, dynamic> json) => MailEvent(
+        date: json['date'] as String? ?? '',
+        title: json['title'] as String?,
+        kind: json['kind'] as String? ?? 'event',
+        status: json['status'] as String?,
+      );
+
+  Map<String, dynamic> toJson() =>
+      {'date': date, 'title': title, 'kind': kind, 'status': status};
+}
+
+/// A thread awaiting a human decision, from `GET /api/mail/review`.
+class ReviewItem {
+  const ReviewItem({
+    required this.id,
+    required this.name,
+    this.summary,
+    this.category,
+    this.topic,
+    this.llmCategory,
+    this.keywordCategory,
+  });
+
+  final String id;
+  final String name;
+  final String? summary;
+  final String? category;
+  final String? topic;
+  final String? llmCategory;
+  final String? keywordCategory;
+
+  /// True when the model and the keyword scorer disagreed — the reason this needs a human.
+  bool get disputed =>
+      llmCategory != null && keywordCategory != null && llmCategory != keywordCategory;
+
+  factory ReviewItem.fromJson(Map<String, dynamic> json) => ReviewItem(
+        id: json['id'] as String? ?? '',
+        name: json['name'] as String? ?? '(untitled)',
+        summary: json['summary'] as String?,
+        category: json['category'] as String?,
+        topic: json['topic'] as String?,
+        llmCategory: json['llm_category'] as String?,
+        keywordCategory: json['keyword_category'] as String?,
+      );
+}
+
+/// An automation rule, from `GET /api/rules`.
+class AutomationRule {
+  const AutomationRule({
+    required this.id,
+    required this.text,
+    this.triggerCategory,
+    this.urgentOnly = false,
+    this.enabled = true,
+  });
+
+  final String id;
+  final String text;
+  final String? triggerCategory;
+  final bool urgentOnly;
+  final bool enabled;
+
+  factory AutomationRule.fromJson(Map<String, dynamic> json) => AutomationRule(
+        id: json['id'] as String? ?? '',
+        text: json['text'] as String? ?? '',
+        triggerCategory: json['trigger_category'] as String?,
+        urgentOnly: json['trigger_urgent_only'] as bool? ?? false,
+        enabled: json['enabled'] as bool? ?? true,
+      );
+}
+
+/// A chat conversation, from the console's `/chat/sessions`.
+class ChatSession {
+  const ChatSession({required this.id, this.title, this.updatedAt, this.messages = const []});
+
+  final int id;
+  final String? title;
+  final DateTime? updatedAt;
+  final List<ChatMessage> messages;
+
+  String get displayTitle => (title == null || title!.isEmpty) ? 'New conversation' : title!;
+
+  factory ChatSession.fromJson(Map<String, dynamic> json) => ChatSession(
+        id: json['id'] as int,
+        title: json['title'] as String?,
+        updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? ''),
+        messages: ((json['messages'] as List<dynamic>?) ?? const [])
+            .map((m) => ChatMessage.fromJson(m as Map<String, dynamic>))
+            .toList(growable: false),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'updated_at': updatedAt?.toIso8601String(),
+        'messages': messages.map((m) => m.toJson()).toList(growable: false),
+      };
+}
+
+class ChatMessage {
+  const ChatMessage({required this.role, required this.content, this.pending = false});
+
+  final String role; // user | assistant
+  final String content;
+
+  /// Set on the optimistic local echo of a question, before the answer returns.
+  final bool pending;
+
+  bool get isUser => role == 'user';
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
+        role: json['role'] as String? ?? 'assistant',
+        content: json['content'] as String? ?? '',
+      );
+
+  Map<String, dynamic> toJson() => {'role': role, 'content': content};
+}
+
+/// `GET /voice/options`. When [configured] is false the server has no Sarvam key and every
+/// voice control stays hidden — an unconfigured server degrades to plain text chat.
+class VoiceOptions {
+  const VoiceOptions({
+    required this.configured,
+    this.languages = const [],
+    this.speakers = const [],
+    this.defaultLanguage = 'en-IN',
+    this.defaultSpeaker = 'shubh',
+  });
+
+  final bool configured;
+  final List<String> languages;
+  final List<String> speakers;
+  final String defaultLanguage;
+  final String defaultSpeaker;
+
+  static const VoiceOptions off = VoiceOptions(configured: false);
+
+  factory VoiceOptions.fromJson(Map<String, dynamic> json) => VoiceOptions(
+        configured: json['configured'] as bool? ?? false,
+        languages: ((json['languages'] as List<dynamic>?) ?? const []).cast<String>(),
+        speakers: ((json['speakers'] as List<dynamic>?) ?? const []).cast<String>(),
+        defaultLanguage: json['default_language'] as String? ?? 'en-IN',
+        defaultSpeaker: json['default_speaker'] as String? ?? 'shubh',
+      );
+}
+
+/// One bar of `GET /api/analytics/category-volume`.
+class VolumePoint {
+  const VolumePoint({required this.bucket, required this.category, required this.count});
+
+  final String bucket;
+  final String category;
+  final int count;
+
+  factory VolumePoint.fromJson(Map<String, dynamic> json) => VolumePoint(
+        bucket: json['bucket'] as String? ?? '',
+        category: json['category'] as String? ?? 'Uncategorized',
+        count: json['count'] as int? ?? 0,
+      );
+}
+
+/// `GET /api/settings`. `offlineMode` is the server's "don't call the model" switch — it is
+/// unrelated to the device being offline. The UI calls it "Skip AI processing".
+class BrainSettings {
+  const BrainSettings({this.offlineMode = false, this.slackChannelId = ''});
+
+  final bool offlineMode;
+  final String slackChannelId;
+
+  factory BrainSettings.fromJson(Map<String, dynamic> json) => BrainSettings(
+        offlineMode: json['offline_mode'] as bool? ?? false,
+        slackChannelId: json['slack_channel_id'] as String? ?? '',
       );
 }

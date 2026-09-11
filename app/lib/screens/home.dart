@@ -3,6 +3,10 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app_state.dart';
+import 'chat.dart';
+import 'insights.dart';
+import 'review.dart';
+import 'settings.dart';
 import 'today.dart';
 import 'tree.dart';
 
@@ -22,7 +26,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_tab == 0 ? 'Today' : 'Knowledge tree'),
+        title: Text(const ['Today', 'Knowledge tree', 'Chat'][_tab]),
         actions: [
           if (state.refreshing)
             const Padding(
@@ -46,13 +50,19 @@ class _HomeScreenState extends State<HomeScreen> {
               switch (value) {
                 case 'sync':
                   await state.runSync();
-                case 'signout':
-                  await state.signOut();
+                case 'review':
+                  await _open(context, const ReviewScreen());
+                case 'insights':
+                  await _open(context, const InsightsScreen());
+                case 'settings':
+                  await _open(context, const SettingsScreen());
               }
             },
             itemBuilder: (_) => const [
               PopupMenuItem(value: 'sync', child: Text('Sync mail now')),
-              PopupMenuItem(value: 'signout', child: Text('Sign out')),
+              PopupMenuItem(value: 'review', child: Text('Needs a decision')),
+              PopupMenuItem(value: 'insights', child: Text('Insights')),
+              PopupMenuItem(value: 'settings', child: Text('Settings')),
             ],
           ),
         ],
@@ -60,7 +70,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: IndexedStack(
         index: _tab,
-        children: const [TodayTab(), TreeTab()],
+        children: const [TodayTab(), TreeTab(), ChatTab()],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
@@ -75,6 +85,11 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: Icon(Icons.account_tree_outlined),
             selectedIcon: Icon(Icons.account_tree),
             label: 'Tree',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.forum_outlined),
+            selectedIcon: Icon(Icons.forum),
+            label: 'Chat',
           ),
         ],
       ),
@@ -224,3 +239,7 @@ Future<void> _pollUntilConnected(AppState state) async {
     }
   }
 }
+
+Future<void> _open(BuildContext context, Widget screen) => Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => screen),
+    );
