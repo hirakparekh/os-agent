@@ -189,11 +189,7 @@ Future<void> _editServer(BuildContext context) async {
         FilledButton(
           onPressed: () {
             final value = controller.text.trim();
-            if (value.isNotEmpty) {
-              state.setConfig(
-                value.contains(':8000') ? ApiConfig.localDev : ApiConfig.hosted(value),
-              );
-            }
+            if (value.isNotEmpty) state.setConfig(ApiConfig.parse(value));
             Navigator.of(dialogContext).pop();
           },
           child: const Text('Save'),

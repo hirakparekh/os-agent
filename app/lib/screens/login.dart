@@ -151,7 +151,7 @@ Future<void> _showServerSheet(BuildContext context) async {
           const SizedBox(height: 6),
           const Text(
             'A hosted deployment serves both services from one address. For local '
-            'development, use http://10.0.2.2:8000 from the emulator.',
+            'development over USB (adb reverse), use http://localhost:8000.',
             style: TextStyle(fontSize: 13),
           ),
           const SizedBox(height: 16),
@@ -169,10 +169,7 @@ Future<void> _showServerSheet(BuildContext context) async {
             onPressed: () {
               final value = controller.text.trim();
               if (value.isEmpty) return;
-              // Local dev runs two ports; anything else is assumed to be one origin.
-              state.setConfig(
-                value.contains(':8000') ? ApiConfig.localDev : ApiConfig.hosted(value),
-              );
+              state.setConfig(ApiConfig.parse(value));
               Navigator.of(sheetContext).pop();
             },
             child: const Text('Save'),

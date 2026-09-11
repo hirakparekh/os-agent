@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -24,6 +25,7 @@ class AppState extends ChangeNotifier {
   final Cache cache;
   static const _storage = FlutterSecureStorage();
   static const _tokenKey = 'auth_token';
+  static const _configKey = 'api_config';
 
   AuthStage stage = AuthStage.starting;
   String? signInError;
@@ -44,6 +46,16 @@ class AppState extends ChangeNotifier {
   /// Restore a previous session and paint cached content before any network call.
   Future<void> boot() async {
     await _loadFromCache();
+    // The server address must survive restarts, or a phone falls back to the defaults and
+    // every request after a relaunch goes nowhere.
+    final savedConfig = await _storage.read(key: _configKey);
+    if (savedConfig != null) {
+      try {
+        api.config = ApiConfig.fromJson(jsonDecode(savedConfig) as Map<String, dynamic>);
+      } catch (_) {
+        // Unreadable setting: keep the defaults rather than fail to start.
+      }
+    }
     final saved = await _storage.read(key: _tokenKey);
     if (saved == null) {
       stage = AuthStage.signedOut;
@@ -511,6 +523,7 @@ class AppState extends ChangeNotifier {
 
   void setConfig(ApiConfig config) {
     api.config = config;
+    unawaited(_storage.write(key: _configKey, value: jsonEncode(config.toJson())));
     notifyListeners();
   }
 }

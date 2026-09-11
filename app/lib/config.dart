@@ -6,20 +6,35 @@
 /// of these are the same value. They are separate here only because local development runs
 /// them on two ports.
 ///
-/// 10.0.2.2 is how the Android emulator reaches the host machine's localhost. A physical
-/// device on the same wifi needs the host's LAN address instead, which is why these are
-/// overridable at runtime rather than baked in.
+/// Local development defaults to localhost, reached over USB with
+/// `adb reverse tcp:8000 tcp:8000 && adb reverse tcp:8080 tcp:8080` — the same on the emulator
+/// and a physical phone. It also lets Google's OAuth redirect to localhost:8080 complete on the
+/// phone itself. A device on the same wifi can use the host's LAN address instead, which is why
+/// these are overridable at runtime rather than baked in.
 class ApiConfig {
   const ApiConfig({required this.consoleBase, required this.brainBase});
 
   final String consoleBase;
   final String brainBase;
 
-  /// Emulator-friendly defaults for local development.
+  /// Defaults for local development over `adb reverse`.
   static const ApiConfig localDev = ApiConfig(
-    consoleBase: 'http://10.0.2.2:8000',
-    brainBase: 'http://10.0.2.2:8080',
+    consoleBase: 'http://localhost:8000',
+    brainBase: 'http://localhost:8080',
   );
+
+  /// What the user typed in Server settings. Local dev runs two ports, so an address on :8000
+  /// keeps its host and pairs it with :8080 for brain; anything else is one hosted origin.
+  factory ApiConfig.parse(String address) {
+    var value = address.trim();
+    if (!value.contains('://')) value = 'http://$value';
+    final uri = Uri.parse(value);
+    if (uri.hasPort && uri.port == 8000) {
+      final host = '${uri.scheme}://${uri.host}';
+      return ApiConfig(consoleBase: '$host:8000', brainBase: '$host:8080');
+    }
+    return ApiConfig.hosted(value);
+  }
 
   /// A hosted deployment: one origin, Caddy routing `/api/*` to brain.
   factory ApiConfig.hosted(String origin) {
