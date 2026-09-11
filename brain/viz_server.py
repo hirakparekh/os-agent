@@ -540,13 +540,31 @@ def mail_review(conn: ConnDep) -> dict[str, Any]:
     return {"threads": items, "categories": categories}
 
 
+def _newer_than(thread: dict[str, Any], since: str) -> bool:
+    """Whether `thread` changed at or after `since` (ISO-8601).
+
+    Filters on updated_at, never created_at: merging a new message into an existing thread
+    leaves created_at alone, so a created_at filter would miss the exact case a poller cares
+    about — an old thread that just became urgent. Both columns are ISO-8601 UTC from
+    store._now(), so a lexicographic compare is a chronological one; no parsing needed.
+    """
+    return (thread.get("updated_at") or "") >= since
+
+
 @app.get("/api/needs-attention")
-def needs_attention(conn: ConnDep) -> dict[str, Any]:
+def needs_attention(conn: ConnDep, since: str = "") -> dict[str, Any]:
     """Threads flagged urgent (brain/mail_ingest.py's deterministic keyword detector), across
-    every channel — one worklist instead of hunting through the mindmap per source."""
+    every channel — one worklist instead of hunting through the mindmap per source.
+
+    `since` (ISO-8601 UTC, optional) narrows this to threads touched at or after that moment,
+    so a notification poller can ask "what's new" instead of re-fetching everything. Omitted
+    means everything, so existing callers are unaffected.
+    """
     items: list[dict[str, Any]] = []
     for thread in store.all_of_type(conn, "mail_thread"):
         if not thread["data"].get("urgent"):
+            continue
+        if since and not _newer_than(thread, since):
             continue
         category, topic = _thread_path(conn, thread["id"])
         items.append(
@@ -557,17 +575,20 @@ def needs_attention(conn: ConnDep) -> dict[str, Any]:
                 "category": category,
                 "topic": topic,
                 "channel": thread["data"].get("channel", "gmail"),
+                "updated_at": thread.get("updated_at"),
             }
         )
     return {"threads": items}
 
 
 @app.get("/api/action-items")
-def action_items(conn: ConnDep) -> dict[str, Any]:
+def action_items(conn: ConnDep, since: str = "") -> dict[str, Any]:
     """Every extracted to-do (brain/mail_ingest.py's deterministic regex extractor), flattened
     across all threads and channels into one unified list."""
     items: list[dict[str, Any]] = []
     for thread in store.all_of_type(conn, "mail_thread"):
+        if since and not _newer_than(thread, since):
+            continue
         category, topic = _thread_path(conn, thread["id"])
         for item in thread["data"].get("action_items") or []:
             items.append(
@@ -578,6 +599,7 @@ def action_items(conn: ConnDep) -> dict[str, Any]:
                     "category": category,
                     "topic": topic,
                     "channel": thread["data"].get("channel", "gmail"),
+                    "updated_at": thread.get("updated_at"),
                 }
             )
     return {"items": items}

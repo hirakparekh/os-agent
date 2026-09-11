@@ -340,3 +340,69 @@ def test_mail_tree_export_renders_markdown_with_category_topic_and_thread(client
 def test_mail_tree_export_requires_authentication():
     with TestClient(viz_server.app) as anonymous:
         assert anonymous.get("/api/mail_tree/export").status_code == 401
+
+
+def _touch(conn, thread_id, *, created_at, updated_at):
+    """Force a thread's timestamps — the pipeline sets them, so tests must forge them to
+    exercise time filtering deterministically."""
+    conn.execute(
+        "UPDATE entities SET created_at = ?, updated_at = ? WHERE id = ?",
+        (created_at, updated_at, thread_id),
+    )
+    conn.commit()
+
+
+def _urgent_thread(conn, thread_id, title, topic_id, *, action_text="submit form by Friday"):
+    store.upsert(
+        conn, "mail_thread",
+        {"source_id": thread_id, "title": title, "body": "b", "source_uids": [thread_id[-1]],
+         "urgent": True, "action_items": [{"text": action_text}]},
+        title=title, summary="s", source="mail",
+    )
+    store.add_edge(conn, topic_id, thread_id, "contains")
+
+
+def test_needs_attention_since_filters_on_update_time(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    _urgent_thread(conn, "mail:thread:1", "Old and quiet", topic)
+    _urgent_thread(conn, "mail:thread:2", "Just became urgent", topic)
+    _touch(conn, "mail:thread:1", created_at="2026-09-01T00:00:00+00:00",
+           updated_at="2026-09-01T00:00:00+00:00")
+    # Created long ago but touched just now — exactly the case a poller must still catch.
+    _touch(conn, "mail:thread:2", created_at="2026-09-01T00:00:00+00:00",
+           updated_at="2026-09-10T12:00:00+00:00")
+
+    everything = client.get("/api/needs-attention").json()["threads"]
+    assert {t["name"] for t in everything} == {"Old and quiet", "Just became urgent"}
+
+    recent = client.get("/api/needs-attention?since=2026-09-05T00:00:00+00:00").json()["threads"]
+    assert [t["name"] for t in recent] == ["Just became urgent"]
+
+
+def test_action_items_since_filters_the_same_way(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    _urgent_thread(conn, "mail:thread:1", "Old", topic, action_text="submit old form by Friday")
+    _urgent_thread(conn, "mail:thread:2", "New", topic, action_text="reply by Wednesday")
+    _touch(conn, "mail:thread:1", created_at="2026-09-01T00:00:00+00:00",
+           updated_at="2026-09-01T00:00:00+00:00")
+    _touch(conn, "mail:thread:2", created_at="2026-09-01T00:00:00+00:00",
+           updated_at="2026-09-10T12:00:00+00:00")
+
+    assert len(client.get("/api/action-items").json()["items"]) == 2
+    recent = client.get("/api/action-items?since=2026-09-05T00:00:00+00:00").json()["items"]
+    assert [i["text"] for i in recent] == ["reply by Wednesday"]
+
+
+def test_since_is_optional_so_existing_callers_are_unaffected(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    _urgent_thread(conn, "mail:thread:1", "Anything", topic)
+    assert len(client.get("/api/needs-attention").json()["threads"]) == 1
+    assert len(client.get("/api/action-items").json()["items"]) == 1
+
+
+def test_feeds_expose_updated_at_for_client_side_cursors(client, conn):
+    """The poller needs a value it can send back as `since` next time."""
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    _urgent_thread(conn, "mail:thread:1", "Anything", topic)
+    assert client.get("/api/needs-attention").json()["threads"][0]["updated_at"]
+    assert client.get("/api/action-items").json()["items"][0]["updated_at"]
