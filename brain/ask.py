@@ -24,14 +24,24 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime
 from typing import Any
 
-from brain import engine, store
+from brain import calendar_tool, engine, store
 
 SYSTEM = """You are the Agent OS brain. You answer questions by reasoning over a catalogue of known
 nodes (people, tasks, meetings) and the typed relations between them. Use ONLY the information in the
 catalogue — never invent people, tasks, dates, or facts. If the catalogue cannot answer the question,
 say so plainly. Cite the exact node ids (the [bracketed] handles) you relied on.
+
+A TODAY line gives the current real-world date. Use it to resolve relative time questions
+("today", "this week", "how many days until X", "is X overdue") against the dated nodes
+(meeting_date, due_date) in the catalogue — do not guess today's date from anything else.
+
+A CALENDAR EVENTS section, when present, lists the user's real upcoming Google Calendar events
+(not catalogue nodes — they have no [bracketed] id, so never invent one or cite them in
+used_nodes). It is the authoritative source for "what's on my calendar" / "what meetings do I
+have today" — prefer it over catalogue meeting nodes when both exist and disagree.
 
 Respond with ONLY a JSON object — no prose before or after, no markdown code fences:
 {"answer": "<concise, direct answer>",
@@ -127,7 +137,25 @@ def _parse_json(text: str) -> dict[str, Any]:
         raise
 
 
-def ask(conn: Any, question: str) -> dict[str, Any]:
+def _calendar_section(user_id: str | int | None) -> str:
+    """Live Google Calendar events for the prompt, or "" if not connected — calendar access is
+    optional, so a disconnected user just gets the catalogue-only behavior as before."""
+    if user_id is None:
+        return ""
+    try:
+        events = calendar_tool.list_upcoming_events(user_id)
+    except Exception:
+        return ""
+    if not events:
+        return ""
+    lines = [
+        f"  {e['start']} — {e['title']}" + (f" @ {e['location']}" if e.get("location") else "")
+        for e in events
+    ]
+    return "=== CALENDAR EVENTS (upcoming, real, live) ===\n" + "\n".join(lines) + "\n\n"
+
+
+def ask(conn: Any, question: str, user_id: str | int | None = None) -> dict[str, Any]:
     """Answer `question` over the brain, returning {answer, path, reasoning}.
 
     `path` is the provenance: the actual nodes the model cited (id + type + title), so the caller can
@@ -135,10 +163,17 @@ def ask(conn: Any, question: str) -> dict[str, Any]:
     unknown rather than hidden — an honesty signal, not a silent drop.
     """
     cat, index = catalogue(conn)
-    if not index:
+    calendar_section = _calendar_section(user_id)
+    if not index and not calendar_section:
         return {"answer": "The brain is empty — ingest a résumé or a meeting first.", "path": [], "reasoning": ""}
 
-    prompt = f"{SYSTEM}\n\n=== CATALOGUE ===\n{cat}\n\n=== QUESTION ===\n{question}\n"
+    today = datetime.now().strftime("%A, %Y-%m-%d")
+    prompt = (
+        f"{SYSTEM}\n\n"
+        f"=== TODAY ===\n{today}\n\n"
+        f"{calendar_section}"
+        f"=== CATALOGUE ===\n{cat}\n\n=== QUESTION ===\n{question}\n"
+    )
     reply = engine.run_llm(prompt)
     parsed = _parse_json(reply)
 

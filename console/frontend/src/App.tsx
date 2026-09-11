@@ -1,18 +1,25 @@
-import { PlugZap, Sparkles, UserCircle2 } from "lucide-react"
+import { LogOut, PanelLeftClose, PanelLeftOpen } from "lucide-react"
 import { useEffect, useState } from "react"
+import { LayoutDashboard, MessageSquare, User, Plug, CheckCircle2, XCircle } from "lucide-react"
+import { motion, AnimatePresence } from "framer-motion"
 
-import { getHealth } from "@/api"
+import { getHealth, getMe } from "@/api"
+import { clearToken, getToken, onAuthChange, setRole, setToken } from "@/auth"
 import { getMailStatus, getMailTree } from "@/lib/brainApi"
 import { Applications } from "@/pages/Applications"
+import { Chat } from "@/pages/Chat"
 import { Home } from "@/pages/Home"
+import { Login } from "@/pages/Login"
 import { Profile } from "@/pages/Profile"
+import { ThemeToggle } from "@/components/ThemeToggle"
 
-export type View = "home" | "profile" | "applications"
+export type View = "chat" | "mail" | "profile" | "applications"
 
-const NAV: { view: View; label: string; icon: typeof Sparkles }[] = [
-  { view: "home", label: "Home", icon: Sparkles },
-  { view: "profile", label: "Profile", icon: UserCircle2 },
-  { view: "applications", label: "Connected apps", icon: PlugZap },
+const NAV: { view: View; label: string; icon: typeof LayoutDashboard }[] = [
+  { view: "chat", label: "Chat", icon: MessageSquare },
+  { view: "mail", label: "Mail", icon: LayoutDashboard },
+  { view: "applications", label: "Integrations", icon: Plug },
+  { view: "profile", label: "Profile", icon: User },
 ]
 
 interface Rail {
@@ -23,9 +30,20 @@ interface Rail {
 }
 
 export default function App() {
-  const [view, setView] = useState<View>("home")
+  const [token, setTokenState] = useState<string | null>(getToken())
+  const [checkingSession, setCheckingSession] = useState(!!getToken())
+  const [view, setView] = useState<View>("chat")
+  // Persisted per-browser, not per-account — a layout preference, not app state worth syncing.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem("sidebarCollapsed") === "1",
+  )
+  useEffect(() => {
+    localStorage.setItem("sidebarCollapsed", sidebarCollapsed ? "1" : "0")
+  }, [sidebarCollapsed])
+  // A question handed from the Mail tab to the Chat tab ("Ask about this thread"). Lives here
+  // because the two are sibling views with no router to carry state between them.
+  const [chatSeed, setChatSeed] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
-  const [scrolled, setScrolled] = useState(false)
   const [rail, setRail] = useState<Rail>({
     appsConnected: 0,
     appsTotal: 0,
@@ -33,7 +51,38 @@ export default function App() {
     mailConnected: null,
   })
 
+  // Re-sync whenever a 401 from either API client (api.ts or brainApi.ts) clears the token
+  // out from under this component.
+  useEffect(() => onAuthChange(() => setTokenState(getToken())), [])
+
+  // On mount (and whenever a token appears), validate it against the backend once — catches
+  // an expired/invalid token left in localStorage from a previous session.
   useEffect(() => {
+    if (!token) {
+      setCheckingSession(false)
+      return
+    }
+    let cancelled = false
+    setCheckingSession(true)
+    getMe()
+      .then((me) => {
+        if (cancelled) return
+        setRole(me.role)
+      })
+      .catch(() => {
+        if (cancelled) return
+        clearToken()
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingSession(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [token])
+
+  useEffect(() => {
+    if (!token) return
     let cancelled = false
 
     Promise.all([getHealth(), getMailStatus().catch(() => ({ connected: false }))]).then(
@@ -67,81 +116,199 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [refreshKey])
-
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 4)
-    onScroll()
-    window.addEventListener("scroll", onScroll, { passive: true })
-    return () => window.removeEventListener("scroll", onScroll)
-  }, [])
+  }, [token, refreshKey])
 
   const refresh = () => setRefreshKey((k) => k + 1)
 
-  return (
-    <div className="min-h-screen">
-      <div
-        className={[
-          "sticky top-0 z-20 border-b backdrop-blur-md transition-shadow duration-300",
-          scrolled ? "border-border bg-background/80 shadow-elev-sm" : "border-transparent bg-background/40",
-        ].join(" ")}
-      >
-        <div className="mx-auto max-w-3xl px-6 pt-6">
-          <header className="flex flex-wrap items-center justify-between gap-4 pb-5">
-            <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-indigo-500 text-base font-semibold text-primary-foreground shadow-glow">
-                A
-              </span>
-              <div className="flex flex-col leading-tight">
-                <span className="text-base font-semibold tracking-tight text-foreground">Agent OS</span>
-                <span className="text-sm text-muted-foreground">Ask about your mail and messages</span>
-              </div>
-            </div>
+  function handleLogin(nextToken: string) {
+    setToken(nextToken)
+    setTokenState(nextToken)
+  }
 
-            <div
-              className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-sm shadow-elev-sm"
-              style={{ color: rail.mailConnected ? "#15803d" : "var(--muted-foreground)" }}
-            >
-              <span className={rail.mailConnected ? "status-dot status-dot-live" : "status-dot"} />
-              <span>{rail.mailConnected ? "Gmail connected" : "Gmail not connected"}</span>
-            </div>
-          </header>
+  function handleLogout() {
+    clearToken()
+    setTokenState(null)
+  }
 
-          <nav className="flex gap-1">
-            {NAV.map((n) => {
-              const Icon = n.icon
-              const active = view === n.view
-              return (
-                <button
-                  key={n.view}
-                  type="button"
-                  onClick={() => setView(n.view)}
-                  className={[
-                    "relative flex items-center gap-1.5 rounded-t-lg px-3.5 pb-3 pt-2 text-sm font-medium transition-colors",
-                    active ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-                  ].join(" ")}
-                >
-                  <Icon className={["h-4 w-4 transition-colors", active ? "text-primary" : "text-muted-foreground/70"].join(" ")} />
-                  {n.label}
-                  <span
-                    className={[
-                      "absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary transition-all duration-300 ease-out",
-                      active ? "opacity-100 scale-x-100" : "opacity-0 scale-x-0",
-                    ].join(" ")}
-                  />
-                </button>
-              )
-            })}
-          </nav>
-        </div>
+  if (!token) {
+    return <Login onLogin={handleLogin} />
+  }
+
+  if (checkingSession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <p className="text-sm text-muted-foreground">Signing you in…</p>
       </div>
+    )
+  }
 
-      <main className="mx-auto max-w-3xl px-6 pb-16 pt-8">
-        <div key={view} className="animate-fade-up">
-          {view === "home" && <Home rail={rail} onNavigate={setView} />}
-          {view === "applications" && <Applications onMailStatusChange={refresh} />}
-          {view === "profile" && <Profile />}
+  return (
+    <div className="flex min-h-screen bg-background text-foreground selection:bg-primary/30">
+      {/* Sidebar Navigation */}
+      <aside
+        className={`${sidebarCollapsed ? "w-20" : "w-64"} border-r border-border bg-card flex-col hidden md:flex z-10 shadow-xl shadow-black/10 transition-[width] duration-200`}
+      >
+        <div className="h-16 flex items-center justify-between px-4 border-b border-border/50">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground shadow-[0_0_15px_rgba(79,70,229,0.5)]">
+              A
+            </div>
+            {!sidebarCollapsed && (
+              <span className="text-sm font-semibold tracking-wide truncate">Agent OS</span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed((c) => !c)}
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
+          >
+            {sidebarCollapsed ? (
+              <PanelLeftOpen className="h-4 w-4" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" />
+            )}
+          </button>
         </div>
+
+        <nav className="flex-1 px-4 py-6 space-y-1">
+          {NAV.map((n) => {
+            const Icon = n.icon
+            const active = view === n.view
+            return (
+              <button
+                key={n.view}
+                type="button"
+                onClick={() => setView(n.view)}
+                title={sidebarCollapsed ? n.label : undefined}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
+                  sidebarCollapsed ? "justify-center" : ""
+                } ${
+                  active
+                    ? "bg-primary/10 text-primary"
+                    : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+                }`}
+              >
+                <Icon className={`h-4 w-4 shrink-0 ${active ? "text-primary" : "opacity-70"}`} />
+                {!sidebarCollapsed && n.label}
+              </button>
+            )
+          })}
+        </nav>
+
+        <div className="p-4 border-t border-border/50">
+          {!sidebarCollapsed && (
+            <div className="flex items-center justify-between text-[11px] uppercase tracking-wider font-semibold text-muted-foreground mb-3 px-2">
+              <span>System Status</span>
+              <ThemeToggle />
+            </div>
+          )}
+          <div
+            title={sidebarCollapsed ? (rail.mailConnected ? "Gmail Connected" : "Gmail Disconnected") : undefined}
+            className={`flex items-center gap-3 rounded-lg bg-secondary/30 py-2.5 border border-border/30 ${
+              sidebarCollapsed ? "justify-center px-0" : "px-3"
+            }`}
+          >
+            {rail.mailConnected ? (
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+            ) : (
+              <XCircle className="h-4 w-4 shrink-0 text-muted-foreground" />
+            )}
+            {!sidebarCollapsed && (
+              <span className="text-xs font-medium text-secondary-foreground">
+                {rail.mailConnected ? "Gmail Connected" : "Gmail Disconnected"}
+              </span>
+            )}
+          </div>
+          {sidebarCollapsed && (
+            <div className="mt-3 flex justify-center">
+              <ThemeToggle />
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={handleLogout}
+            title={sidebarCollapsed ? "Log out" : undefined}
+            className={`mt-3 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground ${
+              sidebarCollapsed ? "justify-center" : ""
+            }`}
+          >
+            <LogOut className="h-4 w-4 shrink-0" />
+            {!sidebarCollapsed && "Log out"}
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col h-screen overflow-hidden bg-background">
+        {/* Mobile Header */}
+        <header className="h-16 md:hidden flex items-center justify-between px-6 border-b border-border bg-card">
+           <div className="flex items-center gap-3">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground shadow-lg shadow-primary/20">
+              A
+            </span>
+            <span className="text-sm font-semibold">Agent OS</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <select
+              value={view}
+              onChange={(e) => setView(e.target.value as View)}
+              className="text-sm bg-transparent border-none outline-none font-medium"
+            >
+              {NAV.map((n) => (
+                <option key={n.view} value={n.view}>
+                  {n.label}
+                </option>
+              ))}
+            </select>
+            <ThemeToggle />
+            <button
+              type="button"
+              onClick={handleLogout}
+              aria-label="Log out"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
+
+        {view === "chat" ? (
+          <div className="min-h-0 flex-1">
+            <Chat seed={chatSeed} onSeedConsumed={() => setChatSeed(null)} />
+          </div>
+        ) : (
+          <div className="flex-1 overflow-auto p-6 md:p-10 relative">
+            {/* Subtle background glow effect */}
+            <div className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-primary/5 rounded-full blur-3xl opacity-50" />
+
+            <div className="max-w-4xl mx-auto w-full relative z-10">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={view}
+                  initial={{ opacity: 0, y: 15, filter: "blur(4px)" }}
+                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                  exit={{ opacity: 0, y: -15, filter: "blur(4px)" }}
+                  transition={{ duration: 0.25, ease: "easeOut" }}
+                >
+                  {view === "mail" && (
+                    <Home
+                      rail={rail}
+                      onNavigate={setView}
+                      onAskAbout={(question) => {
+                        setChatSeed(question)
+                        setView("chat")
+                      }}
+                    />
+                  )}
+                  {view === "applications" && <Applications onMailStatusChange={refresh} />}
+                  {view === "profile" && <Profile />}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   )

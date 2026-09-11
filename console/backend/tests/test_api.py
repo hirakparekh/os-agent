@@ -27,6 +27,7 @@ def _settings(tmp_path: Path) -> Settings:
         clickup_employees_list_id="900",
         database_url=f"sqlite:///{tmp_path}/test.db",
         secret_key="test-secret-at-least-32-bytes-long!!",
+        brain_api_base_url="http://localhost:8080",
     )
 
 
@@ -36,7 +37,11 @@ class _FakeClickUp:
 
 
 @pytest.fixture
-def client(tmp_path: Path) -> Iterator[TestClient]:
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    # Isolate the local integrations store (console/backend/integrations_store.py) from the
+    # real ~/.hermes/console-integrations.json — otherwise a token connected on this machine
+    # via the Applications UI leaks into test assertions about "not_configured".
+    monkeypatch.setenv("CONSOLE_INTEGRATIONS_PATH", str(tmp_path / "console-integrations.json"))
     app = create_app(_settings(tmp_path))
     app.dependency_overrides[get_clickup_client] = lambda: _FakeClickUp()
     with TestClient(app) as test_client:  # triggers lifespan (DB setup + seed)

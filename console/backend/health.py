@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from console.backend.config import Settings, get_settings
+from console.backend.integrations_store import get_secret
 
 router = APIRouter(tags=["health"])
 
@@ -37,9 +38,14 @@ def _status(secret: str | None) -> Status:
 
 @router.get("/health", response_model=HealthReport)
 def health(settings: SettingsDep) -> HealthReport:
+    # settings is a snapshot pinned at process startup (see main.py) — fine for the env-only
+    # integrations below, but slack_bot_token can also be set live from the Applications UI
+    # after startup, so it's re-read from the store on every call instead of trusting the stale
+    # snapshot value.
+    slack_token = settings.slack_bot_token or get_secret("slack_bot_token")
     integrations = [
         IntegrationHealth(name="clickup", status=_status(settings.clickup_token)),
-        IntegrationHealth(name="slack", status=_status(settings.slack_bot_token)),
+        IntegrationHealth(name="slack", status=_status(slack_token)),
         IntegrationHealth(name="fathom", status=_status(settings.fathom_api_key)),
     ]
     ok = all(i.status == "configured" for i in integrations)

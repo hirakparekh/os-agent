@@ -9,10 +9,13 @@ import {
   Mail,
   Plug,
   Plus,
+  Shield,
+  Zap,
 } from "lucide-react"
 import { useEffect, useState } from "react"
+import { motion } from "framer-motion"
 
-import { type Application, AVAILABLE_APPS, CORE_APPS, GMAIL_APP, connectApp, disconnectApp, getHealth } from "@/api"
+import { type Application, AVAILABLE_APPS, CORE_APPS, GMAIL_APP, GOOGLE_CALENDAR_APP, connectApp, disconnectApp, getHealth } from "@/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -24,38 +27,34 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { connectMail, disconnectMail, getMailStatus } from "@/lib/brainApi"
+import { connectCalendar, connectMail, disconnectCalendar, disconnectMail, getCalendarStatus, getMailStatus } from "@/lib/brainApi"
 
+// gmail and google_calendar are both OAuth flows hosted by the brain service, not this
+// backend's generic /applications/{id}/connect — same shape, different endpoint per app.
+const LOCAL_OAUTH_APPS: Record<string, { connect: () => Promise<{ connected: boolean; reason?: string }>; disconnect: () => Promise<{ connected: boolean }> }> = {
+  gmail: { connect: connectMail, disconnect: disconnectMail },
+  google_calendar: { connect: connectCalendar, disconnect: disconnectCalendar },
+}
+
+// Translucent tints rather than solid pastels so the badges read in both light and dark mode.
 const APP_ICON: Record<string, { icon: typeof Plug; className: string }> = {
-  gmail: { icon: Mail, className: "bg-red-50 text-red-500" },
-  clickup: { icon: CheckSquare, className: "bg-violet-50 text-violet-500" },
-  slack: { icon: Hash, className: "bg-fuchsia-50 text-fuchsia-500" },
-  google_calendar: { icon: Calendar, className: "bg-blue-50 text-blue-500" },
-  notion: { icon: FileText, className: "bg-neutral-100 text-neutral-600" },
+  gmail: { icon: Mail, className: "bg-red-500/10 text-red-500" },
+  clickup: { icon: CheckSquare, className: "bg-violet-500/10 text-violet-500" },
+  slack: { icon: Hash, className: "bg-fuchsia-500/10 text-fuchsia-500" },
+  google_calendar: { icon: Calendar, className: "bg-blue-500/10 text-blue-500" },
+  notion: { icon: FileText, className: "bg-neutral-500/10 text-neutral-500" },
 }
 
 function AppIcon({ id }: { id: string }) {
-  const entry = APP_ICON[id] ?? { icon: Plug, className: "bg-accent text-primary" }
+  const entry = APP_ICON[id] ?? { icon: Plug, className: "bg-primary/10 text-primary" }
   const Icon = entry.icon
   return (
-    <span className={["flex h-9 w-9 shrink-0 items-center justify-center rounded-lg", entry.className].join(" ")}>
+    <span className={["flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", entry.className].join(" ")}>
       <Icon className="h-4 w-4" />
     </span>
   )
 }
 
-/**
- * One app, shown as a card with an inline "set up" flow.
- *
- * BACKEND DEV: clicking "Set up" calls `connectApp(id, credential)` →
- * POST /applications/{id}/connect, which DOES NOT EXIST yet. Until you build it, the
- * call 404s and we surface a "pending backend" note (so the page still demos). Once the
- * endpoint is live, a token app stores the secret + flips to Connected; an OAuth app
- * returns { authUrl } and we redirect the browser to start the OAuth flow.
- *
- * Gmail is the exception: it's connected through a separate service (brain/emailtool.py),
- * so its disconnect actually works today — it revokes the cached OAuth token.
- */
 function AppCard({ id, name, description, connected, kind, credentialLabel, onChanged }: Application & { onChanged?: () => void }) {
   const [open, setOpen] = useState(false)
   const [credential, setCredential] = useState("")
@@ -70,7 +69,6 @@ function AppCard({ id, name, description, connected, kind, credentialLabel, onCh
     setNote(null)
     try {
       const res = await connectApp(id, kind === "token" ? credential : "")
-      // OAuth apps: backend hands back a URL to redirect to and finish authorisation.
       if (res.authUrl) {
         window.location.href = res.authUrl
         return
@@ -78,23 +76,28 @@ function AppCard({ id, name, description, connected, kind, credentialLabel, onCh
       setDone(true)
       setOpen(false)
     } catch {
-      // POST /applications/{id}/connect isn't implemented yet — backend dev's task.
       setNote("Connecting this app isn't available yet.")
     } finally {
       setBusy(false)
     }
   }
 
-  async function connectGmail() {
+  async function connectLocalOAuth() {
+    const flow = LOCAL_OAUTH_APPS[id]
     setBusy(true)
     setNote(null)
     try {
-      const res = await connectMail()
+      const res = await flow.connect()
       setDone(res.connected)
-      if (!res.connected) setNote("Authorization wasn't completed — try again.")
+      // Say *why* it didn't take. Consent can succeed in the browser and still fail
+      // server-side, and "try again" on a loop is the worst possible response to that.
+      if (!res.connected) {
+        setNote(res.reason ?? "Authorization wasn't completed — try again.")
+      }
       onChanged?.()
-    } catch {
-      setNote("Couldn't reach the mail service — is it running?")
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : ""
+      setNote(detail || "Couldn't reach the brain service — is it running?")
     } finally {
       setBusy(false)
     }
@@ -104,8 +107,9 @@ function AppCard({ id, name, description, connected, kind, credentialLabel, onCh
     setBusy(true)
     setNote(null)
     try {
-      if (id === "gmail") {
-        const res = await disconnectMail()
+      const flow = LOCAL_OAUTH_APPS[id]
+      if (flow) {
+        const res = await flow.disconnect()
         setDone(res.connected)
       } else {
         await disconnectApp(id)
@@ -120,114 +124,139 @@ function AppCard({ id, name, description, connected, kind, credentialLabel, onCh
   }
 
   return (
-    <Card className="card-hover">
-      <CardHeader className="flex flex-col gap-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <AppIcon id={id} />
-            <CardTitle className="truncate text-base">{name}</CardTitle>
-          </div>
-          {done ? (
-            <Badge variant="success" className="shrink-0">
-              <Check className="mr-1 h-3 w-3" />
-              Connected
-            </Badge>
-          ) : (
-            <Badge variant="caution" className="shrink-0">
-              <Clock className="mr-1 h-3 w-3" />
-              Not connected
-            </Badge>
-          )}
-        </div>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {id === "gmail" && !done && (
-          <p className="text-sm text-muted-foreground">
-            Opens a Google sign-in tab to connect — no terminal needed.
-          </p>
+    <motion.div whileHover={{ y: -4 }} transition={{ type: "spring", stiffness: 300 }} className="h-full">
+      <Card className={`h-full flex flex-col relative overflow-hidden transition-all duration-300 ${done ? 'border-primary/30 shadow-[0_4px_20px_rgba(79,70,229,0.05)]' : 'border-border/40 hover:border-border/80'}`}>
+
+        {/* Subtle glow effect for connected apps */}
+        {done && (
+          <div className="absolute top-0 right-0 w-32 h-32 bg-primary/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none" />
         )}
-        {id === "gmail" ? (
-          <div className="flex gap-2">
-            {!done && (
-              <Button size="sm" onClick={connectGmail} disabled={busy}>
-                {busy ? "Waiting for authorization…" : "Connect"}
-              </Button>
-            )}
-            {done && (
-              <Button size="sm" variant="ghost" onClick={disconnect} disabled={busy}>
-                {busy ? "Disconnecting…" : "Disconnect"}
-              </Button>
-            )}
-          </div>
-        ) : !open ? (
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant={done ? "outline" : "default"}
-              onClick={() => setOpen(true)}
-            >
-              {done ? "Manage" : "Set up"}
-            </Button>
-            {done && (
-              <Button size="sm" variant="ghost" onClick={disconnect} disabled={busy}>
-                {busy ? "Disconnecting…" : "Disconnect"}
-              </Button>
-            )}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2 rounded-md border border-input p-3">
-            {kind === "token" ? (
-              <>
-                <Label htmlFor={`cred-${id}`}>{credentialLabel ?? "Credential"}</Label>
-                <Input
-                  id={`cred-${id}`}
-                  type="password"
-                  value={credential}
-                  onChange={(e) => setCredential(e.target.value)}
-                  placeholder="paste it here"
-                />
-              </>
+
+        {/* Description sits below the title/badge row, full width — beside the badge, long
+            descriptions get squeezed into a one-word-per-line column. */}
+        <CardHeader className="flex flex-col gap-2 pb-4">
+          <div className="flex items-center justify-between gap-3 z-10">
+            <div className="flex min-w-0 items-center gap-2">
+              <AppIcon id={id} />
+              <CardTitle className="truncate text-base font-semibold">{name}</CardTitle>
+            </div>
+            {done ? (
+              <Badge variant="default" className="shrink-0 shadow-[0_0_10px_rgba(79,70,229,0.2)]">
+                <Check className="mr-1.5 h-3 w-3" />
+                Connected
+              </Badge>
             ) : (
-              <p className="text-sm text-muted-foreground">
-                You'll be asked to sign in to {name} to connect it.{" "}
-                <ExternalLink className="inline h-3 w-3" />
-              </p>
+              <Badge variant="outline" className="shrink-0 border-border bg-transparent text-muted-foreground">
+                <Clock className="mr-1.5 h-3 w-3" />
+                Available
+              </Badge>
             )}
-            <div className="flex gap-2">
-              <Button size="sm" onClick={submit} disabled={busy}>
-                {busy ? "Connecting…" : "Connect"}
-              </Button>
+          </div>
+          <CardDescription className="z-10 text-xs leading-relaxed">{description}</CardDescription>
+        </CardHeader>
+
+        <CardContent className="flex flex-col gap-4 mt-auto pt-0 z-10">
+          <div className="h-[1px] w-full bg-border/40 mb-2" />
+          
+          {id in LOCAL_OAUTH_APPS && !done && (
+            <div className="flex items-start gap-2 text-xs text-muted-foreground bg-secondary/30 p-2.5 rounded-md border border-border/40">
+              <Shield className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <p>Uses secure Google OAuth. No terminal configuration required.</p>
+            </div>
+          )}
+
+          {id in LOCAL_OAUTH_APPS ? (
+            <div className="flex gap-2 w-full">
+              {!done && (
+                <Button size="sm" onClick={connectLocalOAuth} disabled={busy} className="w-full relative overflow-hidden group">
+                  <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-in-out" />
+                  {busy ? "Waiting..." : "Connect Account"}
+                </Button>
+              )}
+              {done && (
+                <Button size="sm" variant="secondary" onClick={disconnect} disabled={busy} className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30">
+                  {busy ? "Disconnecting..." : "Disconnect"}
+                </Button>
+              )}
+            </div>
+          ) : !open ? (
+            <div className="flex gap-2 w-full">
               <Button
                 size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setOpen(false)
-                  setNote(null)
-                }}
+                variant={done ? "outline" : "default"}
+                onClick={() => setOpen(true)}
+                className="w-full"
               >
-                Cancel
+                {done ? "Manage Configuration" : "Configure Integration"}
               </Button>
+              {done && (
+                <Button size="sm" variant="ghost" onClick={disconnect} disabled={busy} className="px-3 text-destructive hover:bg-destructive/10">
+                  Disconnect
+                </Button>
+              )}
             </div>
-          </div>
-        )}
-        {note && <p className="text-sm text-muted-foreground">{note}</p>}
-      </CardContent>
-    </Card>
+          ) : (
+            <motion.div 
+              initial={{ opacity: 0, height: 0 }} 
+              animate={{ opacity: 1, height: 'auto' }}
+              className="flex flex-col gap-3 rounded-lg border border-primary/20 bg-primary/5 p-4"
+            >
+              {kind === "token" ? (
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`cred-${id}`} className="text-xs font-semibold text-primary/80 uppercase tracking-wider">{credentialLabel ?? "API Token"}</Label>
+                    <Input
+                      id={`cred-${id}`}
+                      type="password"
+                      value={credential}
+                      onChange={(e) => setCredential(e.target.value)}
+                      placeholder="Enter secret token..."
+                      className="bg-card text-sm h-9"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                  <ExternalLink className="h-4 w-4 shrink-0 text-primary mt-0.5" />
+                  <p>
+                    You will be redirected to authenticate with {name}.
+                  </p>
+                </div>
+              )}
+              
+              <div className="flex gap-2 mt-2">
+                <Button size="sm" onClick={submit} disabled={busy} className="flex-1">
+                  {busy ? <Zap className="h-4 w-4 animate-pulse mr-2" /> : null}
+                  {busy ? "Connecting..." : "Confirm & Connect"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setOpen(false)
+                    setNote(null)
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </motion.div>
+          )}
+          {note && (
+            <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-xs text-destructive bg-destructive/10 p-2 rounded-md border border-destructive/20 text-center">
+              {note}
+            </motion.p>
+          )}
+        </CardContent>
+      </Card>
+    </motion.div>
   )
 }
 
-/**
- * Applications page: shows every integration and lets you set up or disconnect it.
- *
- * BACKEND DEV: live connected-status for the 3 core apps comes from GET /health today. To make
- * this fully data-driven (and to support the "available" apps), implement GET /applications and
- * have it return every app + its `connected` state — then this page can drop the hardcoded
- * CORE_APPS / AVAILABLE_APPS fallbacks in api.ts.
- */
 export function Applications({ onMailStatusChange }: { onMailStatusChange?: () => void }) {
   const [statuses, setStatuses] = useState<Record<string, boolean> | null>(null)
   const [gmailConnected, setGmailConnected] = useState(false)
+  const [calendarConnected, setCalendarConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -242,30 +271,42 @@ export function Applications({ onMailStatusChange }: { onMailStatusChange?: () =
     getMailStatus()
       .then((s) => setGmailConnected(s.connected))
       .catch(() => setGmailConnected(false))
+
+    getCalendarStatus()
+      .then((s) => setCalendarConnected(s.connected))
+      .catch(() => setCalendarConnected(false))
   }, [])
 
-  if (error) return <p className="text-sm text-destructive">{error}</p>
-  if (!statuses) {
-    return (
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="h-32 animate-pulse rounded-xl border bg-muted/60" />
-        ))}
+  if (error) return (
+    <div className="flex flex-col items-center justify-center py-20 text-center">
+      <div className="h-12 w-12 rounded-full bg-destructive/10 flex items-center justify-center mb-4">
+        <Zap className="h-6 w-6 text-destructive" />
       </div>
-    )
-  }
+      <p className="text-lg font-semibold text-destructive">Connection Error</p>
+      <p className="text-sm text-muted-foreground mt-1">{error}</p>
+    </div>
+  )
+  
+  if (!statuses) return (
+    <div className="flex flex-col items-center justify-center py-20">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4"></div>
+      <p className="text-sm text-muted-foreground">Loading integration status...</p>
+    </div>
+  )
 
   function handleChanged() {
     getMailStatus()
       .then((s) => setGmailConnected(s.connected))
       .catch(() => setGmailConnected(false))
+    getCalendarStatus()
+      .then((s) => setCalendarConnected(s.connected))
+      .catch(() => setCalendarConnected(false))
     onMailStatusChange?.()
   }
 
-  // Every app in one list, then split by whether it's actually connected — apps move
-  // between sections as their real status changes, instead of a fixed "core" tier.
   const all: Application[] = [
     { ...GMAIL_APP, connected: gmailConnected },
+    { ...GOOGLE_CALENDAR_APP, connected: calendarConnected },
     ...Object.entries(CORE_APPS).map(([id, meta]) => ({
       id,
       ...meta,
@@ -277,15 +318,20 @@ export function Applications({ onMailStatusChange }: { onMailStatusChange?: () =
   const notConnected = all.filter((a) => !a.connected)
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-10">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Integrations</h1>
+        <p className="text-muted-foreground mt-1 text-sm">Connect your tools to expand your agent's capabilities.</p>
+      </div>
+
       {connected.length > 0 && (
-        <section className="flex flex-col gap-3 animate-fade-up">
-          <div className="flex items-center gap-2">
-            <Plug className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold text-foreground">Connected</h2>
-            <span className="text-sm text-muted-foreground">({connected.length})</span>
+        <section className="flex flex-col gap-4">
+          <div className="flex items-center gap-2 pb-2 border-b border-border/50">
+            <Plug className="h-4 w-4 text-emerald-500" />
+            <h2 className="text-sm font-semibold text-foreground uppercase tracking-wider">Active Connections</h2>
+            <Badge variant="secondary" className="ml-2 bg-secondary/50">{connected.length}</Badge>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {connected.map((app) => (
               <AppCard key={app.id} {...app} onChanged={handleChanged} />
             ))}
@@ -293,12 +339,12 @@ export function Applications({ onMailStatusChange }: { onMailStatusChange?: () =
         </section>
       )}
 
-      <section className="flex flex-col gap-3 animate-fade-up" style={{ animationDelay: "80ms" }}>
-        <div className="flex items-center gap-2">
+      <section className="flex flex-col gap-4">
+        <div className="flex items-center gap-2 pb-2 border-b border-border/50 mt-4">
           <Plus className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold text-foreground">Add an app</h2>
+          <h2 className="text-sm font-semibold text-foreground uppercase tracking-wider">Available Integrations</h2>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {notConnected.map((app) => (
             <AppCard key={app.id} {...app} onChanged={handleChanged} />
           ))}
