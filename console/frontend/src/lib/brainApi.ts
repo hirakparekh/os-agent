@@ -247,6 +247,23 @@ export function saveProfile(details: ProfileDetailPayload[]): Promise<ProfileRes
   })
 }
 
+export interface MailSettings {
+  /** When true, mail ingest never calls the LLM — pure keyword classification, no thread
+   * summarization/merging synthesis, no calendar-event extraction. See brain/mail_ingest.py. */
+  offline_mode: boolean
+}
+
+export function getSettings(): Promise<MailSettings> {
+  return request<MailSettings>("/api/settings")
+}
+
+export function setOfflineMode(enabled: boolean): Promise<MailSettings> {
+  return request<MailSettings>("/api/settings", {
+    method: "PUT",
+    body: JSON.stringify({ offline_mode: enabled }),
+  })
+}
+
 export interface MailReviewItem {
   id: string
   name: string

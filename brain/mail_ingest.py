@@ -153,6 +153,11 @@ DEFAULT_CONFIG = {
         ],
     },
     "conditional_keywords": {k: list(v) for k, v in DEFAULT_CONDITIONAL_KEYWORDS.items()},
+    # When true, ingest never calls the LLM: classification falls back to pure keyword
+    # scoring (already tolerated by arbitrate_category), and merge/summary/event-extraction
+    # falls back to _offline_merge_or_create_thread. See config_with_settings — this default
+    # is overridden per-user via the mail_settings entity, not by editing this file.
+    "offline_mode": False,
 }
 
 
@@ -479,6 +484,48 @@ def merge_or_create_thread(
     return json.loads(raw)
 
 
+# A BM25 score this high against an existing thread's summary is treated as "clearly a later
+# round of the same process" — same order of magnitude as mail_ingest's own confidence floors
+# (MIN_ABSOLUTE_SCORE), tuned empirically the same way.
+OFFLINE_MERGE_THRESHOLD = 2.0
+
+
+def _offline_merge_or_create_thread(
+    email: dict[str, Any], existing_threads: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Non-LLM fallback for merge_or_create_thread, used when offline_mode is on.
+
+    No narrative synthesis is possible without a model, so this is deliberately plainer than
+    the LLM path: body is the raw email text (no folding-in of prior rounds), summary is a
+    truncation of it, and no calendar event is ever extracted (that needs the same synthesis
+    the LLM path provides). The merge decision itself is real, not a stub — it BM25-ranks the
+    new email against existing threads' summaries in this topic, the same primitive
+    brain/mail_ask.py already uses for thread search.
+    """
+    body_text = (email.get("body_text") or "").strip()
+    summary = " ".join(body_text.split()[:30]) or (email.get("subject") or "")
+    event = {"has_event": False, "title": "", "start": "", "end": "", "location": ""}
+
+    if existing_threads:
+        documents = {t["id"]: t.get("summary") or "" for t in existing_threads}
+        ranked = bm25.rank(body_text, documents)
+        if ranked and ranked[0][1] >= OFFLINE_MERGE_THRESHOLD:
+            return {
+                "action": "merge",
+                "merge_into_id": ranked[0][0],
+                "summary": summary,
+                "body": body_text,
+                "event": event,
+            }
+    return {
+        "action": "new",
+        "merge_into_id": None,
+        "summary": summary,
+        "body": body_text,
+        "event": event,
+    }
+
+
 def gather_attachment_findings(
     email: dict[str, Any], config: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -634,6 +681,38 @@ def config_with_learned(conn: Any, config: dict[str, Any]) -> dict[str, Any]:
     return {**config, "category_keywords": merged}
 
 
+SETTINGS_ID = "mail:settings"
+
+
+def get_settings(conn: Any) -> dict[str, Any]:
+    """This user's saved pipeline settings (currently just offline_mode), as a plain dict."""
+    entity = store.get(conn, SETTINGS_ID)
+    if not entity:
+        return {}
+    return {k: v for k, v in entity["data"].items() if k != "source_id"}
+
+
+def set_offline_mode(conn: Any, enabled: bool) -> dict[str, Any]:
+    """Persist the offline-mode toggle for this user (brain.db is already per-user)."""
+    store.upsert(
+        conn,
+        "mail_settings",
+        {"source_id": SETTINGS_ID, "offline_mode": enabled},
+        title="Mail settings",
+        summary="Per-user mail pipeline settings.",
+        source="user",
+    )
+    return get_settings(conn)
+
+
+def config_with_settings(conn: Any, config: dict[str, Any]) -> dict[str, Any]:
+    """`config` with this user's saved settings overriding the file-based defaults."""
+    settings = get_settings(conn)
+    if "offline_mode" not in settings:
+        return config
+    return {**config, "offline_mode": bool(settings["offline_mode"])}
+
+
 def cached_attachments_for(uids: list[str]) -> list[Path]:
     """The still-on-disk attachment files belonging to these source uids.
 
@@ -783,13 +862,17 @@ def ingest_email(
     """
     # Attachment identifiers come from the user's stored profile ("About you"), so adding your
     # name there is enough — no config file to edit. Anything in config is kept as a fallback.
-    config = {
-        **config,
-        "identifiers": [
-            *(config.get("identifiers") or []),
-            *profile.identifiers_from_profile(profile.load_profile(conn)),
-        ],
-    }
+    config = config_with_settings(
+        conn,
+        {
+            **config,
+            "identifiers": [
+                *(config.get("identifiers") or []),
+                *profile.identifiers_from_profile(profile.load_profile(conn)),
+            ],
+        },
+    )
+    offline = bool(config.get("offline_mode"))
     findings = gather_attachment_findings(email, config)
 
     stored_categories = store.all_of_type(conn, "mail_category")
@@ -799,7 +882,9 @@ def ingest_email(
         for name in config.get("seeded_categories", [])
         if name not in seeded_names
     ]
-    classification = classify_email(email, findings, categories)
+    # Offline mode skips the LLM call entirely — arbitrate_category already tolerates a blank
+    # llm_category (falls back to the top keyword score, or "low" confidence with none).
+    classification = {} if offline else classify_email(email, findings, categories)
 
     subject = email.get("subject", "") or ""
     llm_category = (classification.get("category") or "").strip()
@@ -835,7 +920,11 @@ def ingest_email(
             for n in store.neighbors(conn, t["id"], "contains", incoming=True)
         )
     ]
-    decision = merge_or_create_thread(email, findings, existing_threads)
+    decision = (
+        _offline_merge_or_create_thread(email, existing_threads)
+        if offline
+        else merge_or_create_thread(email, findings, existing_threads)
+    )
 
     # Validate against every real thread, not just this topic's existing_threads: a merge target
     # from a different topic is legitimate (reclassification), a fully hallucinated id is not.

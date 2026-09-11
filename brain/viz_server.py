@@ -434,6 +434,24 @@ def mail_rescan_attachments(conn: ConnDep) -> dict[str, Any]:
     return {"changed": changed}
 
 
+class SettingsUpdate(BaseModel):
+    offline_mode: bool
+
+
+@app.get("/api/settings")
+def get_settings(conn: ConnDep) -> dict[str, Any]:
+    """This user's saved pipeline settings, filled in with defaults for anything unset."""
+    config = mail_ingest.config_with_settings(conn, mail_ingest.load_config())
+    return {"offline_mode": bool(config.get("offline_mode"))}
+
+
+@app.put("/api/settings")
+def put_settings(body: SettingsUpdate, conn: ConnDep) -> dict[str, Any]:
+    """Toggle offline mode: when on, mail ingest never calls the LLM (see
+    brain/mail_ingest.py's config_with_settings / _offline_merge_or_create_thread)."""
+    return mail_ingest.set_offline_mode(conn, body.offline_mode)
+
+
 def _thread_path(conn: Any, thread_id: str) -> tuple[str | None, str | None]:
     """The (category, topic) a thread currently sits under, by walking `contains` upwards."""
     topics = store.neighbors(conn, thread_id, "contains", incoming=True)

@@ -1269,3 +1269,76 @@ def test_cached_attachments_are_matched_by_uid(tmp_path, monkeypatch):
 
     names = [p.name for p in mail_ingest.cached_attachments_for(["700"])]
     assert names == ["700__a.xlsx", "700__b.pdf"]
+
+
+def _raise_if_called(*_args, **_kwargs):
+    raise AssertionError("the LLM must never be called in offline mode")
+
+
+def test_ingest_email_offline_mode_never_calls_the_llm(tmp_path, monkeypatch):
+    conn = _conn(tmp_path)
+    monkeypatch.setattr(mail_ingest, "classify_email", _raise_if_called)
+    monkeypatch.setattr(mail_ingest, "merge_or_create_thread", _raise_if_called)
+
+    email = _email(uid="1", subject="Accenture Off-Campus Drive - interview shortlisted")
+    result = mail_ingest.ingest_email(conn, email, {**_defaults(), "offline_mode": True})
+
+    # Keyword scoring alone still resolves a real category — offline mode degrades gracefully,
+    # it doesn't just stop working.
+    assert result["category"] == "Placements"
+    thread = store.get(conn, result["thread_id"])
+    assert thread["data"]["calendar_events"] == []
+
+
+def test_offline_mode_still_merges_a_related_second_email_by_bm25(tmp_path, monkeypatch):
+    conn = _conn(tmp_path)
+    monkeypatch.setattr(mail_ingest, "classify_email", _raise_if_called)
+    monkeypatch.setattr(mail_ingest, "merge_or_create_thread", _raise_if_called)
+    config = {**_defaults(), "offline_mode": True}
+    # Offline mode has no LLM to normalize topic names, so the subject IS the topic — an
+    # identical subject (a real reply-chain, unlike a "Round 1"/"Round 2" subject change) is
+    # what puts both emails in the same topic's merge-candidate pool in the first place.
+    subject = "Accenture Off-Campus Drive - interview shortlisted"
+
+    first = _email(uid="1", subject=subject)
+    first["body_text"] = "You are shortlisted for the Accenture off-campus drive interview round."
+    first_result = mail_ingest.ingest_email(conn, first, config)
+
+    second = _email(uid="2", subject=subject)
+    second["body_text"] = (
+        "You are shortlisted for the Accenture off-campus drive interview round two."
+    )
+    second_result = mail_ingest.ingest_email(conn, second, config)
+
+    assert second_result["thread_id"] == first_result["thread_id"]
+    thread = store.get(conn, first_result["thread_id"])
+    assert thread["data"]["source_uids"] == ["1", "2"]
+
+
+def test_offline_mode_creates_a_new_thread_for_an_unrelated_email(tmp_path, monkeypatch):
+    conn = _conn(tmp_path)
+    monkeypatch.setattr(mail_ingest, "classify_email", _raise_if_called)
+    monkeypatch.setattr(mail_ingest, "merge_or_create_thread", _raise_if_called)
+    config = {**_defaults(), "offline_mode": True}
+
+    first = _email(uid="1", subject="Accenture Off-Campus Drive - interview shortlisted")
+    first["body_text"] = "You are shortlisted for the Accenture off-campus drive interview."
+    first_result = mail_ingest.ingest_email(conn, first, config)
+
+    second = _email(uid="2", subject="Yoga Competition 2026")
+    second["body_text"] = "The Yoga Competition will be held on 12 March 2026 in the quad."
+    second_result = mail_ingest.ingest_email(conn, second, config)
+
+    assert second_result["thread_id"] != first_result["thread_id"]
+
+
+def test_set_offline_mode_persists_and_overrides_file_config(tmp_path):
+    conn = _conn(tmp_path)
+    assert mail_ingest.get_settings(conn) == {}
+
+    saved = mail_ingest.set_offline_mode(conn, True)
+    assert saved == {"offline_mode": True}
+    assert mail_ingest.get_settings(conn) == {"offline_mode": True}
+
+    merged = mail_ingest.config_with_settings(conn, {"offline_mode": False, "other": 1})
+    assert merged == {"offline_mode": True, "other": 1}

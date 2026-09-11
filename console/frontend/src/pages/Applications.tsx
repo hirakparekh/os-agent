@@ -1,4 +1,4 @@
-import { Check, Clock, ExternalLink, Plug, Plus, Shield, Network, Zap } from "lucide-react"
+import { Check, Clock, ExternalLink, Plug, Plus, Shield, Network, WifiOff, Zap } from "lucide-react"
 import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 
@@ -14,7 +14,67 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { connectCalendar, connectMail, disconnectCalendar, disconnectMail, getCalendarStatus, getMailStatus } from "@/lib/brainApi"
+import {
+  connectCalendar,
+  connectMail,
+  disconnectCalendar,
+  disconnectMail,
+  getCalendarStatus,
+  getMailStatus,
+  getSettings,
+  setOfflineMode,
+} from "@/lib/brainApi"
+
+function OfflineModeCard() {
+  const [offline, setOffline] = useState<boolean | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => setOffline(s.offline_mode))
+      .catch(() => setOffline(false))
+  }, [])
+
+  async function toggle() {
+    if (offline === null) return
+    setBusy(true)
+    try {
+      const result = await setOfflineMode(!offline)
+      setOffline(result.offline_mode)
+    } catch {
+      // Leave the switch as it was — the request failed, nothing changed server-side.
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card className={offline ? "border-amber-500/30 bg-amber-500/5" : ""}>
+      <CardContent className="flex flex-wrap items-center justify-between gap-4 py-5">
+        <div className="flex items-start gap-3">
+          <div className={`h-9 w-9 shrink-0 rounded-lg flex items-center justify-center ${offline ? "bg-amber-500/20" : "bg-secondary/80 border border-border/50"}`}>
+            <WifiOff className={`h-4 w-4 ${offline ? "text-amber-500" : "text-muted-foreground"}`} />
+          </div>
+          <div>
+            <p className="text-sm font-semibold">Offline mode</p>
+            <p className="text-xs text-muted-foreground mt-0.5 max-w-md">
+              Mail sync never calls the LLM — classification falls back to pure keyword
+              matching, and thread summaries use the raw email text. Zero API cost.
+            </p>
+          </div>
+        </div>
+        <Button
+          size="sm"
+          variant={offline ? "default" : "outline"}
+          disabled={offline === null || busy}
+          onClick={toggle}
+        >
+          {offline === null ? "Loading…" : offline ? "On" : "Off"}
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
 
 // gmail and google_calendar are both OAuth flows hosted by the brain service, not this
 // backend's generic /applications/{id}/connect — same shape, different endpoint per app.
@@ -293,6 +353,8 @@ export function Applications({ onMailStatusChange }: { onMailStatusChange?: () =
         <h1 className="text-3xl font-bold tracking-tight">Integrations</h1>
         <p className="text-muted-foreground mt-1 text-sm">Connect your tools to expand your agent's capabilities.</p>
       </div>
+
+      <OfflineModeCard />
 
       {connected.length > 0 && (
         <section className="flex flex-col gap-4">
