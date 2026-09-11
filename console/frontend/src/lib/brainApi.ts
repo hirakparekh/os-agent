@@ -214,6 +214,12 @@ export interface MailStatus {
   reason?: string
   /** The mailbox actually authorised, discovered from the OAuth grant. */
   email?: string | null
+  /** True when only a fresh consent can fix it. Routine on this project: the OAuth client is
+   * unverified and asks for a restricted scope, so Google expires refresh tokens weekly —
+   * render it as "Reconnect", never as an error. */
+  needs_reconnect?: boolean
+  /** Unix seconds of the last successful consent, for warning before that weekly expiry. */
+  connected_at?: number | null
 }
 
 export function getMailStatus(): Promise<MailStatus> {
@@ -224,16 +230,18 @@ export function disconnectMail(): Promise<MailStatus> {
   return request<MailStatus>("/api/mail/disconnect", { method: "POST" })
 }
 
-// Opens the OAuth consent browser tab on the machine running this server and blocks until
-// the person finishes (or abandons) it — see brain/viz_server.py's mail_connect().
-export function connectMail(): Promise<MailStatus> {
-  return request<MailStatus>("/api/mail/connect", { method: "POST" })
+/** Google's consent URL for this user. The caller opens it in the user's own browser; the
+ * server handles the redirect back (see brain/oauth_flow.py) and the caller then polls status. */
+export function startMailConnect(): Promise<{ auth_url: string }> {
+  return request<{ auth_url: string }>("/api/mail/connect", { method: "POST" })
 }
 
 export interface CalendarStatus {
   connected: boolean
   /** Why the calendar isn't usable — set only when `connected` is false. */
   reason?: string
+  needs_reconnect?: boolean
+  connected_at?: number | null
 }
 
 export function getCalendarStatus(): Promise<CalendarStatus> {
@@ -244,11 +252,40 @@ export function disconnectCalendar(): Promise<CalendarStatus> {
   return request<CalendarStatus>("/api/calendar/disconnect", { method: "POST" })
 }
 
-// Same shape as connectMail(): opens the OAuth consent browser tab on the machine running this
-// server and blocks until the person finishes (or abandons) it — see brain/viz_server.py's
-// calendar_connect().
-export function connectCalendar(): Promise<CalendarStatus> {
-  return request<CalendarStatus>("/api/calendar/connect", { method: "POST" })
+export function startCalendarConnect(): Promise<{ auth_url: string }> {
+  return request<{ auth_url: string }>("/api/calendar/connect", { method: "POST" })
+}
+
+/**
+ * Drive a full consent round trip: open Google in a new tab, then poll until the server
+ * reports the grant landed. Resolves with the final status, or throws on timeout.
+ *
+ * Polling (rather than catching the redirect) is what keeps this simple — the server does the
+ * code exchange, so no popup messaging, no callback URL for the client to own. Works unchanged
+ * from a mobile app, which only has to open the URL and poll the same endpoint.
+ */
+export async function runConsentFlow<T extends { connected: boolean }>(
+  start: () => Promise<{ auth_url: string }>,
+  poll: () => Promise<T>,
+  { timeoutMs = 180_000, intervalMs = 2_000 }: { timeoutMs?: number; intervalMs?: number } = {},
+): Promise<T> {
+  const { auth_url } = await start()
+  const tab = window.open(auth_url, "_blank", "noopener,noreferrer")
+  if (!tab) throw new BrainApiError(0, "Pop-up blocked — allow pop-ups and try again.")
+
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    await new Promise((r) => setTimeout(r, intervalMs))
+    try {
+      const status = await poll()
+      if (status.connected) return status
+    } catch {
+      // A transient poll failure isn't fatal — keep waiting for the deadline.
+    }
+    if (Date.now() > deadline) {
+      throw new BrainApiError(0, "Timed out waiting for Google — did the consent tab finish?")
+    }
+  }
 }
 
 /** Reverses an auto-created calendar event — the "Undo" button on the post-sync popup. */

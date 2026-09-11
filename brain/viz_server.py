@@ -19,7 +19,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from brain import (
@@ -27,12 +27,13 @@ from brain import (
     calendar_tool,
     mail_ask,
     mail_ingest,
+    oauth_flow,
     profile,
     slack_ingest,
     store,
 )
 from brain.auth import CurrentUser
-from brain.emailtool import _load_oauth_credentials, _token_path, mailbox_status
+from brain.emailtool import _token_path, mailbox_status
 
 app = FastAPI(title="Agent OS Brain - Viz")
 HERE = Path(__file__).resolve().parent
@@ -246,24 +247,19 @@ def mail_disconnect(user: CurrentUser) -> dict[str, Any]:
 
 
 @app.post("/api/mail/connect")
-def mail_connect(user: CurrentUser) -> dict[str, Any]:
-    """Run the interactive OAuth consent flow for this user and cache the resulting token.
+def mail_connect(user: CurrentUser) -> Any:
+    """Start Gmail consent: returns the Google URL for the caller's own browser to visit.
 
-    This server and the browser hitting it are on the same machine (local dev), so opening
-    the consent page here — the same thing `emailtool.py auth` does from a terminal — reaches
-    the person clicking "Connect" without them needing a terminal at all. Blocks until they
-    complete (or abandon) the browser consent flow.
+    This no longer blocks on consent. It used to open a consent window on the *server* via
+    InstalledAppFlow.run_local_server, which only worked while the server and the browser were
+    the same machine — the single thing that made this app impossible to host. The browser now
+    completes consent at Google and is redirected to /api/oauth/callback; the client polls
+    /api/mail/status to see it land.
     """
     try:
-        _load_oauth_credentials(interactive=True, user_id=user)
-    except Exception as exc:
-        # Without this the consent page says "you may close this window" while the server 500s
-        # and the UI just keeps showing "not connected" with no explanation of why.
-        return JSONResponse(
-            status_code=502,
-            content={"connected": False, "error": f"Could not complete sign-in: {exc}"},
-        )
-    return mailbox_status(user)
+        return {"auth_url": oauth_flow.build_auth_url("gmail", user)}
+    except oauth_flow.OAuthFlowError as exc:
+        return JSONResponse(status_code=502, content={"error": str(exc)})
 
 
 @app.get("/api/calendar/status")
@@ -280,16 +276,55 @@ def calendar_disconnect(user: CurrentUser) -> dict[str, Any]:
 
 
 @app.post("/api/calendar/connect")
-def calendar_connect(user: CurrentUser) -> dict[str, Any]:
-    """Run the interactive OAuth consent flow for Calendar, same shape as /api/mail/connect."""
+def calendar_connect(user: CurrentUser) -> Any:
+    """Start Calendar consent — same redirect shape as /api/mail/connect."""
     try:
-        calendar_tool.connect(user_id=user)
-    except Exception as exc:
-        return JSONResponse(
-            status_code=502,
-            content={"connected": False, "error": f"Could not complete sign-in: {exc}"},
+        return {"auth_url": oauth_flow.build_auth_url("calendar", user)}
+    except oauth_flow.OAuthFlowError as exc:
+        return JSONResponse(status_code=502, content={"error": str(exc)})
+
+
+def _callback_page(title: str, detail: str) -> HTMLResponse:
+    """The page Google's redirect lands on. It is the user's own browser tab, not the app, so
+    it gets plain HTML telling them to go back — never JSON."""
+    return HTMLResponse(
+        f"""<!doctype html><meta charset="utf-8">
+<title>{title}</title>
+<style>body{{font:16px/1.6 system-ui,sans-serif;margin:12vh auto;max-width:32rem;padding:0 1.5rem;
+color:#0f172a}}h1{{font-size:1.25rem;margin:0 0 .5rem}}p{{color:#475569;margin:0}}</style>
+<h1>{title}</h1><p>{detail}</p>"""
+    )
+
+
+@app.get("/api/oauth/callback")
+def oauth_callback(
+    state: str = "", code: str = "", error: str = ""
+) -> Any:
+    """Where Google sends the user back after consent.
+
+    Deliberately unauthenticated: it is a browser redirect from Google and cannot carry a
+    bearer token. `state` is a JWT this server signed at the start of the flow, so it both
+    identifies the user and proves the callback wasn't forged (see brain/oauth_flow.py).
+    """
+    if error:
+        return _callback_page(
+            "Connection cancelled", f"Google reported: {error}. You can close this tab."
         )
-    return calendar_tool.calendar_status(user)
+    if not (state and code):
+        return _callback_page(
+            "Something went wrong",
+            "That link is missing its state or code. Try connecting again.",
+        )
+    try:
+        _user_id, service = oauth_flow.complete(state, code)
+    except oauth_flow.OAuthFlowError as exc:
+        return _callback_page(
+            "Could not finish connecting", f"{exc} You can close this tab and try again."
+        )
+    label = "Gmail" if service == "gmail" else "Google Calendar"
+    return _callback_page(
+        f"{label} connected", "You can close this tab and return to Agent OS."
+    )
 
 
 @app.get("/api/calendar/events")

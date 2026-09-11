@@ -16,10 +16,11 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
-  connectCalendar,
-  connectMail,
   disconnectCalendar,
   disconnectMail,
+  runConsentFlow,
+  startCalendarConnect,
+  startMailConnect,
   getCalendarStatus,
   getMailStatus,
   getSettings,
@@ -77,11 +78,24 @@ function OfflineModeCard() {
   )
 }
 
-// gmail and google_calendar are both OAuth flows hosted by the brain service, not this
-// backend's generic /applications/{id}/connect — same shape, different endpoint per app.
-const LOCAL_OAUTH_APPS: Record<string, { connect: () => Promise<{ connected: boolean; reason?: string }>; disconnect: () => Promise<{ connected: boolean }> }> = {
-  gmail: { connect: connectMail, disconnect: disconnectMail },
-  google_calendar: { connect: connectCalendar, disconnect: disconnectCalendar },
+// gmail and google_calendar are both Google OAuth flows served by the brain service, not this
+// backend's generic /applications/{id}/connect. Each opens Google in a new tab and polls its
+// own status endpoint until the server has exchanged the code (see brain/oauth_flow.py).
+const GOOGLE_OAUTH_APPS: Record<
+  string,
+  {
+    connect: () => Promise<{ connected: boolean; reason?: string }>
+    disconnect: () => Promise<{ connected: boolean }>
+  }
+> = {
+  gmail: {
+    connect: () => runConsentFlow(startMailConnect, getMailStatus),
+    disconnect: disconnectMail,
+  },
+  google_calendar: {
+    connect: () => runConsentFlow(startCalendarConnect, getCalendarStatus),
+    disconnect: disconnectCalendar,
+  },
 }
 
 function AppCard({ id, name, description, connected, kind, credentialLabel, onChanged }: Application & { onChanged?: () => void }) {
@@ -112,14 +126,14 @@ function AppCard({ id, name, description, connected, kind, credentialLabel, onCh
   }
 
   async function connectLocalOAuth() {
-    const flow = LOCAL_OAUTH_APPS[id]
+    const flow = GOOGLE_OAUTH_APPS[id]
     setBusy(true)
     setNote(null)
     try {
       const res = await flow.connect()
       setDone(res.connected)
-      // Say *why* it didn't take. Consent can succeed in the browser and still fail
-      // server-side, and "try again" on a loop is the worst possible response to that.
+      // Say *why* it didn't take. Consent can succeed at Google and still fail server-side,
+      // and "try again" on a loop is the worst possible response to that.
       if (!res.connected) {
         setNote(res.reason ?? "Authorization wasn't completed — try again.")
       }
@@ -136,7 +150,7 @@ function AppCard({ id, name, description, connected, kind, credentialLabel, onCh
     setBusy(true)
     setNote(null)
     try {
-      const flow = LOCAL_OAUTH_APPS[id]
+      const flow = GOOGLE_OAUTH_APPS[id]
       if (flow) {
         const res = await flow.disconnect()
         setDone(res.connected)
@@ -189,19 +203,19 @@ function AppCard({ id, name, description, connected, kind, credentialLabel, onCh
         <CardContent className="flex flex-col gap-4 mt-auto pt-0 z-10">
           <div className="h-[1px] w-full bg-border/40 mb-2" />
           
-          {id in LOCAL_OAUTH_APPS && !done && (
+          {id in GOOGLE_OAUTH_APPS && !done && (
             <div className="flex items-start gap-2 text-xs text-muted-foreground bg-secondary/30 p-2.5 rounded-md border border-border/40">
               <Shield className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-              <p>Uses secure Google OAuth. No terminal configuration required.</p>
+              <p>Opens Google sign-in in a new tab. Come back here once it says connected.</p>
             </div>
           )}
 
-          {id in LOCAL_OAUTH_APPS ? (
+          {id in GOOGLE_OAUTH_APPS ? (
             <div className="flex gap-2 w-full">
               {!done && (
                 <Button size="sm" onClick={connectLocalOAuth} disabled={busy} className="w-full relative overflow-hidden group">
                   <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-in-out" />
-                  {busy ? "Waiting..." : "Connect Account"}
+                  {busy ? "Waiting for Google…" : "Connect Account"}
                 </Button>
               )}
               {done && (

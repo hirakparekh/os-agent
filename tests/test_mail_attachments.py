@@ -215,10 +215,13 @@ def test_mailbox_status_reports_connected_for_usable_credentials(tmp_path, monke
     class _Creds:
         valid = True
 
-    monkeypatch.setattr(ma_tool, "_load_oauth_credentials", lambda interactive, user_id: _Creds())
+    monkeypatch.setattr(ma_tool, "_load_oauth_credentials", lambda user_id: _Creds())
     monkeypatch.setattr(ma_tool, "_mailbox_email", lambda user_id: "me@example.com")
+    monkeypatch.setattr(ma_tool, "_connected_at", lambda user_id: 1757000000)
 
-    assert ma_tool.mailbox_status(1) == {"connected": True, "email": "me@example.com"}
+    assert ma_tool.mailbox_status(1) == {
+        "connected": True, "email": "me@example.com", "connected_at": 1757000000,
+    }
 
 
 def test_mailbox_status_reports_disconnected_when_refresh_fails(tmp_path, monkeypatch):
@@ -226,13 +229,30 @@ def test_mailbox_status_reports_disconnected_when_refresh_fails(tmp_path, monkey
     token.write_text("{}", encoding="utf-8")
     monkeypatch.setenv("GMAIL_TOKEN_PATH", str(token))
 
-    def _boom(interactive, user_id):
+    def _boom(user_id):
         raise RuntimeError("invalid_scope")
 
     monkeypatch.setattr(ma_tool, "_load_oauth_credentials", _boom)
     status = ma_tool.mailbox_status(1)
     assert status["connected"] is False
     assert "invalid_scope" in status["reason"]
+
+
+def test_mailbox_status_flags_an_expired_grant_as_needing_reconnect(tmp_path, monkeypatch):
+    """The weekly refresh-token expiry is routine here, so it must be distinguishable from a
+    genuine fault — the UI renders it as "Reconnect", not as an error."""
+    token = tmp_path / "token.json"
+    token.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("GMAIL_TOKEN_PATH", str(token))
+
+    def _expired(user_id):
+        raise ma_tool.ReconnectRequired("Gmail access expired or was revoked — reconnect Gmail.")
+
+    monkeypatch.setattr(ma_tool, "_load_oauth_credentials", _expired)
+    status = ma_tool.mailbox_status(1)
+    assert status["connected"] is False
+    assert status["needs_reconnect"] is True
+    assert "reconnect" in status["reason"].lower()
 
 
 # --- CSV / DOCX / image attachments must not be dead ends --------------------------------

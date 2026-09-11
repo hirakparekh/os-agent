@@ -29,8 +29,9 @@ Modes
         Mark a specific email as read (\\Seen flag) by UID.
 
     python emailtool.py auth
-        One-time interactive OAuth consent (opens a browser); caches a refresh
-        token at GMAIL_TOKEN_PATH so `list` / `mark-read` never need a browser.
+        Report the stored grant (address + token path), or explain how to connect.
+        Consent itself is a browser redirect flow served by the brain API
+        (brain/oauth_flow.py) — never a window opened by this script.
 
 Output is a single line of JSON to stdout. Errors go to stderr and exit non-zero.
 """
@@ -121,6 +122,22 @@ def _fetch_gmail_address(creds) -> str | None:
         return None
 
 
+def _connected_at(user_id: str | int | None = None) -> int | None:
+    """Unix time of the last successful consent, recorded by brain/oauth_flow.py.
+
+    Surfaced so the UI can warn *before* the ~7-day refresh-token expiry rather than only
+    reporting failure once it has already bitten.
+    """
+    meta_path = _meta_path(user_id)
+    if not meta_path.exists():
+        return None
+    try:
+        value = json.loads(meta_path.read_text(encoding="utf-8")).get("connected_at")
+        return int(value) if isinstance(value, (int, float)) else None
+    except Exception:
+        return None
+
+
 def _mailbox_email(user_id: str | int | None = None) -> str | None:
     """The mailbox address to log into IMAP as. Per-user: read from the cached OAuth
     discovery (_meta_path). Legacy/global (user_id=None): the static EMAIL_EMAIL env var."""
@@ -136,57 +153,51 @@ def _mailbox_email(user_id: str | int | None = None) -> str | None:
         return None
 
 
-def _load_oauth_credentials(interactive: bool, user_id: str | int | None = None):
+class ReconnectRequired(RuntimeError):
+    """The stored grant is gone or unusable and only a fresh consent can fix it.
+
+    Distinct from a generic error on purpose: on this project it is a *routine* state, not an
+    exceptional one. The OAuth client is unverified and requests a restricted scope
+    (https://mail.google.com/), so Google expires refresh tokens after 7 days — every user
+    reconnects roughly weekly. Callers should render this as a "Reconnect" action, never as a
+    crash. See brain/oauth_flow.py.
+    """
+
+
+def _load_oauth_credentials(user_id: str | int | None = None):
+    """Load this user's stored credentials, refreshing them if needed.
+
+    Consent is *not* handled here — it's a redirect flow owned by brain/oauth_flow.py. This
+    function only ever reads and refreshes an existing grant, which is what makes it safe to
+    call from a headless subprocess (emailtool runs that way during ingest).
+    """
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
 
     token_path = _token_path(user_id)
-    creds = None
-    if token_path.exists():
-        # Load with whatever scopes the token was actually granted, not the scopes we would
-        # request today: refreshing a token with a wider set than it was issued for fails with
-        # `invalid_scope`. userinfo.email is only needed to discover the mailbox address during
-        # a fresh consent, so an older mail-only token stays perfectly usable for IMAP.
-        creds = Credentials.from_authorized_user_file(str(token_path))
+    if not token_path.exists():
+        raise ReconnectRequired(f"No Gmail grant stored at {token_path} — connect Gmail first.")
 
+    # Load with whatever scopes the token was actually granted, not the scopes we would
+    # request today: refreshing a token with a wider set than it was issued for fails with
+    # `invalid_scope`. userinfo.email is only needed to discover the mailbox address during
+    # a fresh consent, so an older mail-only token stays perfectly usable for IMAP.
+    creds = Credentials.from_authorized_user_file(str(token_path))
     if creds and creds.valid:
         return creds
 
-    fresh_consent = False
-    if creds and creds.expired and creds.refresh_token:
+    if not (creds and creds.refresh_token):
+        raise ReconnectRequired("Stored Gmail grant has no refresh token — reconnect Gmail.")
+
+    try:
         creds.refresh(Request())
-    else:
-        if not interactive:
-            raise RuntimeError(
-                f"No valid OAuth token at {token_path}. Run `python emailtool.py auth` once "
-                "to complete the browser consent flow."
-            )
-        creds_path = _credentials_path()
-        if not creds_path.exists():
-            raise RuntimeError(
-                f"Missing OAuth client secrets at {creds_path}. Download it from Google Cloud "
-                "Console (see SETUP.md) and save it there, or set GMAIL_CREDENTIALS_PATH."
-            )
-        flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), GMAIL_OAUTH_SCOPES)
-        login_hint = os.environ.get("EMAIL_EMAIL")
-        # Google grants `openid` alongside userinfo.email without being asked, and oauthlib
-        # treats *any* difference between requested and granted scopes as fatal — it raises
-        # after the browser has already shown "you may close this window", so consent appears
-        # to succeed while the token is silently never written. Relaxing the check accepts the
-        # superset Google actually returns.
-        os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
-        creds = flow.run_local_server(port=0, login_hint=login_hint)
-        fresh_consent = True
+    except Exception as exc:
+        # invalid_grant is the expected weekly outcome, not a bug — see ReconnectRequired.
+        raise ReconnectRequired(
+            f"Gmail access expired or was revoked — reconnect Gmail. ({exc})"
+        ) from exc
 
-    token_path.parent.mkdir(parents=True, exist_ok=True)
     token_path.write_text(creds.to_json(), encoding="utf-8")
-
-    if fresh_consent and user_id is not None:
-        email = _fetch_gmail_address(creds)
-        if email:
-            _meta_path(user_id).write_text(json.dumps({"email": email}), encoding="utf-8")
-
     return creds
 
 
@@ -202,21 +213,26 @@ def mailbox_status(user_id: str | int | None = None) -> dict[str, Any]:
     if not _token_path(user_id).exists():
         return {"connected": False, "reason": "no mailbox connected yet"}
     try:
-        creds = _load_oauth_credentials(interactive=False, user_id=user_id)
-    except Exception as exc:  # refresh failure, revoked grant, malformed token file
+        creds = _load_oauth_credentials(user_id)
+    except ReconnectRequired as exc:
+        # Routine on this project (weekly refresh-token expiry) — flagged so the UI can offer
+        # a Reconnect button instead of rendering it as a failure.
+        return {"connected": False, "reason": str(exc), "needs_reconnect": True}
+    except Exception as exc:  # malformed token file, unreadable path, …
         return {"connected": False, "reason": f"stored credentials are unusable: {exc}"}
     if not creds or not creds.valid:
-        return {"connected": False, "reason": "stored credentials could not be refreshed"}
-    return {"connected": True, "email": _mailbox_email(user_id)}
+        return {"connected": False, "reason": "stored credentials could not be refreshed",
+                "needs_reconnect": True}
+    return {"connected": True, "email": _mailbox_email(user_id),
+            "connected_at": _connected_at(user_id)}
 
 
 def _oauth_login(
     conn: imaplib.IMAP4_SSL,
     user: str,
-    interactive: bool = False,
     user_id: str | int | None = None,
 ) -> None:
-    creds = _load_oauth_credentials(interactive=interactive, user_id=user_id)
+    creds = _load_oauth_credentials(user_id)
     auth_string = f"user={user}\1auth=Bearer {creds.token}\1\1"
     conn.authenticate("XOAUTH2", lambda _challenge: auth_string.encode("ascii"))
 
@@ -385,11 +401,17 @@ def cmd_mark_read(uid: str, user_id: str | None = None):
 
 
 def cmd_auth(user_id: str | None = None):
-    _load_oauth_credentials(interactive=True, user_id=user_id)
-    user = _mailbox_email(user_id)
-    if not user:
-        raise RuntimeError("OAuth consent completed but the mailbox address wasn't discovered.")
-    print(json.dumps({"authenticated": user, "token_path": str(_token_path(user_id))}))
+    """Report the stored grant. Consent itself is no longer a CLI concern: it is a browser
+    redirect flow served by the brain API (see brain/oauth_flow.py), because a consent window
+    opened on the server only ever worked when the server *was* your laptop."""
+    status = mailbox_status(user_id)
+    if not status.get("connected"):
+        raise RuntimeError(
+            f"{status.get('reason', 'not connected')} — connect Gmail from the console "
+            "(Integrations -> Gmail), which opens Google consent in your own browser."
+        )
+    print(json.dumps({"authenticated": status.get("email"),
+                      "token_path": str(_token_path(user_id))}))
 
 
 def main():
