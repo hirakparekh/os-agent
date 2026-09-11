@@ -2,7 +2,7 @@
 
 Safe by default: with no `SLACK_BOT_TOKEN` (or no channel) it runs **dry-run** — it prints what it would
 send and touches no network. Drop a bot token + channel into `.env` and it goes live. Mirrors the
-`clickup/` client shape: one typed class, credentials from the environment, nothing else.
+project's client conventions: one typed class, credentials from the environment, nothing else.
 
     from slack.client import SlackClient
     SlackClient().post("hello")            # dry-run unless SLACK_BOT_TOKEN + SLACK_CHANNEL are set

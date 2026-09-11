@@ -29,44 +29,6 @@ export interface UserMe {
   role: AccessRole
 }
 
-// Parsed résumé — mirrors the talent-radar schema from tools/resume/parser.py
-export interface RadarAxis {
-  score: number
-  evidence: string | null
-}
-
-export interface ResumeData {
-  schema_version: string
-  parse_confidence: number
-  name: string | null
-  email: string | null
-  headline: string | null
-  summary: string | null
-  total_years_experience: number | null
-  seniority: string | null
-  skills: string[]
-  strengths: string[]
-  domains: string[]
-  roles: Array<{
-    company: string | null
-    title: string | null
-    start: string | null
-    end: string | null
-    months: number | null
-    highlights: string[]
-  }>
-  education: Array<{
-    degree: string | null
-    field: string | null
-    institution: string | null
-    year: number | null
-  }>
-  certifications: string[]
-  achievements: string[]
-  radar: Record<string, RadarAxis>
-  flags: string[]
-}
-
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -121,48 +83,18 @@ export async function getHealth(): Promise<HealthReport> {
     // Nothing is actually connected until you set the real tokens (see SETUP.md).
     return {
       ok: false,
-      integrations: [
-        { name: "slack",   status: "not_configured" },
-        { name: "fathom",  status: "not_configured" },
-      ],
+      integrations: [{ name: "slack", status: "not_configured" }],
     }
   }
   return request<HealthReport>("/health")
 }
 
-/**
- * Fetch the parsed résumé for an employee.
- * Developers can only fetch their own (backend enforces with 403).
- */
-export async function getResume(email: string): Promise<ResumeData> {
-  if (DEMO_MODE) {
-    await delay(400)
-    throw new ApiError(404, `No résumé on file for ${email} in demo mode.`)
-  }
-  return request<ResumeData>(`/resume?email=${encodeURIComponent(email)}`)
-}
-
 // ===========================================================================
-// Applications (integration setup) — the "Applications" page (formerly "Health")
+// Integrations page (src/pages/Applications.tsx).
 //
-// ⚠️ BACKEND DEV: the connect/disconnect endpoints below DO NOT EXIST YET.
-// Today the backend only exposes GET /health (read-only status of the 3 core apps).
-// To let HR *set up* apps from the UI, please implement:
-//
-//   GET  /applications
-//     → Application[]  — the full catalog (core + available) with live `connected` state.
-//       v1 may derive the 3 core apps from the existing /health check. Until this exists
-//       the frontend falls back to the hardcoded CORE_APPS / AVAILABLE_APPS below.
-//
-//   POST /applications/{id}/connect    body: { credential: string }
-//     → For a "token" app: validate the token, STORE IT SECURELY server-side
-//       (env / secret store — NEVER return it to the browser), mark the app connected.
-//       For an "oauth" app (Slack, Google): ignore `credential`, instead return
-//       { authUrl } and let the browser redirect to begin the OAuth flow; the callback
-//       endpoint stores the resulting token. Return 200 + the updated Application.
-//
-//   POST /applications/{id}/disconnect
-//     → remove the stored credential, mark disconnected. Return 200.
+// Slack connects through console/backend (POST /applications/slack/connect validates the bot
+// token against Slack's own auth.test, then stores it server-side). Gmail and Google Calendar
+// connect through the brain service's own OAuth endpoints instead — see lib/brainApi.ts.
 //
 // SECURITY: credentials only ever travel browser → backend (HTTPS), are stored as
 // secrets, and are never sent back down. This honors ADR-0002 (no third-party SDKs/
@@ -172,7 +104,7 @@ export async function getResume(email: string): Promise<ResumeData> {
 export type AppConnectKind = "token" | "oauth"
 
 export interface Application {
-  id: string // stable key: "clickup", "slack", "fathom", "google_calendar", …
+  id: string // stable key: "gmail", "google_calendar", "slack"
   name: string // display name
   description: string // one-liner shown on the card
   connected: boolean

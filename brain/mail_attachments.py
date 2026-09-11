@@ -2,8 +2,7 @@
 
 Excel: parsed entirely locally (no LLM) — scan every cell for the user's identifiers (name,
 roll/neo id) and return the rows that mention them.
-PDF: text extracted locally, hard-capped, then (only if it looks like a JD) compared to the
-student's résumé profile via one small LLM call.
+PDF: text extracted locally and hard-capped — kept verbatim, whatever the document is.
 
 The local-first, hard-capped design is the guard against a single large attachment burning
 through a free-tier OpenRouter key on one email.
@@ -21,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from brain import bm25
-from brain.openrouter import call_openrouter, call_openrouter_vision
+from brain.openrouter import call_openrouter_vision
 
 PDF_CHAR_CAP = 4000
 TEXT_CHAR_CAP = 4000
@@ -35,10 +34,6 @@ OCR_TIMEOUT_S = 90
 # baked into pixels. Leaving those unread makes the mail unanswerable, so images get read too.
 VISION_MODEL_ENV = "OPENROUTER_VISION_MODEL"
 DEFAULT_VISION_MODEL = "meta-llama/llama-3.2-11b-vision-instruct:free"
-JD_KEYWORDS = (
-    "responsibilities", "requirements", "qualifications",
-    "job description", "role overview", "skills required",
-)
 
 
 def identifiers_from_config(config: dict[str, Any]) -> list[str]:
@@ -222,26 +217,6 @@ def _data_url(path: Path) -> str:
     return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode('ascii')}"
 
 
-def looks_like_job_description(text: str) -> bool:
-    """Cheap local heuristic — no LLM call needed just to decide whether to bother matching."""
-    lowered = text.lower()
-    return sum(1 for kw in JD_KEYWORDS if kw in lowered) >= 2
-
-
-def match_resume_to_jd(jd_text: str, resume_profile: dict) -> str:
-    """One small LLM call: does this student's résumé match this JD? Short match/gap note."""
-    skills = ", ".join(resume_profile.get("skills", []))
-    summary = resume_profile.get('summary') or resume_profile.get('headline') or ''
-    prompt = (
-        "You are screening ONE candidate against ONE job description. Reply with 2-3 short "
-        "sentences: how well they match, and the clearest gap if any. No preamble, no markdown.\n\n"
-        f"CANDIDATE SKILLS: {skills}\n"
-        f"CANDIDATE SUMMARY: {summary}\n\n"
-        f"JOB DESCRIPTION:\n{jd_text}"
-    )
-    return call_openrouter(prompt).strip()
-
-
 def process_attachment(path: Path, config: dict) -> dict:
     """Dispatch one saved attachment file by suffix. Always returns a small, prompt-safe finding."""
     suffix = Path(path).suffix.lower()
@@ -265,26 +240,11 @@ def process_attachment(path: Path, config: dict) -> dict:
 
     if suffix == ".pdf":
         text = extract_pdf_text(path)
-        mentions = find_identifiers(text, identifiers)
-        if not looks_like_job_description(text):
-            return {
-                "file": Path(path).name,
-                "kind": "pdf",
-                "finding": text[:500],
-                "mentions_you": mentions,
-            }
-        resume_profile = config.get("resume_profile") or {}
-        if resume_profile:
-            note = match_resume_to_jd(text, resume_profile)
-        else:
-            note = "no résumé configured to match against"
         return {
             "file": Path(path).name,
-            "kind": "pdf_jd",
-            "finding": note,
-            # A JD's text is replaced by the match note, so carry the hit separately or the
-            # fact that you were named in it would be lost.
-            "mentions_you": mentions,
+            "kind": "pdf",
+            "finding": text[:500],
+            "mentions_you": find_identifiers(text, identifiers),
         }
 
     # Notices, menus and posters routinely arrive as an image or a plain table. Leaving these

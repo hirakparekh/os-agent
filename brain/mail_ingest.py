@@ -99,7 +99,6 @@ DEFAULT_CONFIG = {
     # Anything that counts as "you" inside an attachment — name, roll/neo id, registration
     # number. Used to answer "am I on this shortlist?" (see brain/mail_attachments.py).
     "identifiers": [],
-    "resume_path": "",
     "seeded_categories": ["Lectures & Profs", "Placements", "General College"],
     "category_keywords": {
         "Lectures & Profs": [
@@ -1235,10 +1234,6 @@ def run_iter(
     """
     conn = conn or store.connect(user_id=user_id)
     config = load_config()
-    if config.get("resume_path"):
-        from tools.resume.parser import parse_resume
-
-        config["resume_profile"] = parse_resume(Path(config["resume_path"]))
 
     yield {"stage": "connecting"}
     emails = fetch_unread_emails(since_minutes, user_id=user_id)

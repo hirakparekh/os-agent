@@ -1,7 +1,7 @@
 """Tests for the brain's HTTP surface: auth gating, the review queue, and reclassification.
 
 The per-user SQLite connection is injected via FastAPI's dependency_overrides so each test gets
-its own throwaway database, mirroring how console/backend's tests fake ClickUp.
+its own throwaway database.
 """
 
 import json

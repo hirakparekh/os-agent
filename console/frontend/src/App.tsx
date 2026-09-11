@@ -88,9 +88,9 @@ export default function App() {
     let cancelled = false
 
     // The rail's "connections" count is exactly the three cards the Integrations page actually
-    // shows (Gmail, Google Calendar, Slack) — not console/backend's /health, which still
-    // reports clickup/fathom even though neither has a UI card anymore (see console/backend/
-    // health.py). Counting those as part of the denominator is what produced the wrong "2/4".
+    // shows: Gmail and Google Calendar (status from the brain service) plus Slack (status from
+    // console/backend's /health). Counting anything beyond those three in the denominator is
+    // what produced the wrong "2/4".
     Promise.all([
       getHealth(),
       getMailStatus().catch(() => ({ connected: false })),

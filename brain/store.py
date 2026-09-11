@@ -31,8 +31,8 @@ CREATE TABLE IF NOT EXISTS entities (
     natural_key  TEXT,
     title        TEXT,
     summary      TEXT,
-    data         TEXT,                       -- full JSON payload (radar / task fields / …)
-    source       TEXT,                       -- provenance: file path, meeting, clickup id
+    data         TEXT,                       -- full JSON payload (thread fields, classification, …)
+    source       TEXT,                       -- provenance: e.g. the source message uids
     needs_review INTEGER NOT NULL DEFAULT 0,  -- 1 = resolver flagged a possible duplicate
     created_at   TEXT,
     updated_at   TEXT

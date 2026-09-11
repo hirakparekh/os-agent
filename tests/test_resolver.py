@@ -6,7 +6,7 @@ from brain.resolver import natural_key, normalize, resolve
 def _existing():
     return [
         {"id": "T1", "name": "Fix the login bug", "assignee": "Sai"},
-        {"id": "T2", "clickup_id": "CU-101", "name": "Secure API routes", "assignee": "Pruthvik"},
+        {"id": "T2", "source_id": "CU-101", "name": "Secure API routes", "assignee": "Pruthvik"},
     ]
 
 
@@ -29,14 +29,14 @@ def test_normalization_matches_despite_case_and_punctuation():
 
 
 def test_source_id_match_updates_regardless_of_text():
-    r = resolve({"clickup_id": "CU-101", "name": "totally different wording", "assignee": "x"}, _existing())
+    r = resolve({"source_id": "CU-101", "name": "totally different wording", "assignee": "x"}, _existing())
     assert r.action == "update"
     assert r.matched_id == "T2"
     assert r.key == "CU-101"
 
 
 def test_source_id_new_creates():
-    r = resolve({"clickup_id": "CU-999", "name": "New thing", "assignee": "x"}, _existing())
+    r = resolve({"source_id": "CU-999", "name": "New thing", "assignee": "x"}, _existing())
     assert r.action == "create"
     assert r.key == "CU-999"
 

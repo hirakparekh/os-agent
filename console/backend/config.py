@@ -18,13 +18,10 @@ DEFAULT_DATABASE_URL = "postgresql+psycopg://ops:ops@localhost:5433/ops_console"
 
 @dataclass(frozen=True)
 class Settings:
-    clickup_token: str | None
     slack_bot_token: str | None
-    fathom_api_key: str | None
     # Seed admin login, created on startup if absent (see db.seed_admin).
     admin_email: str
     admin_password: str
-    clickup_employees_list_id: str | None
     database_url: str
     secret_key: str
     # The brain service (brain/viz_server.py) — chat.py proxies mail Q&A there, forwarding the
@@ -34,14 +31,11 @@ class Settings:
     @classmethod
     def from_env(cls) -> Settings:
         return cls(
-            clickup_token=os.environ.get("CLICKUP_TOKEN"),
-            # The env var is a deploy-time override; a token pasted into the Applications UI
+            # The env var is a deploy-time override; a token pasted into the Integrations UI
             # (stored via console/backend/applications.py) works without an env var or restart.
             slack_bot_token=os.environ.get("SLACK_BOT_TOKEN") or get_secret("slack_bot_token"),
-            fathom_api_key=os.environ.get("FATHOM_API_KEY"),
             admin_email=os.environ.get("OPS_ADMIN_EMAIL", "admin@agent-os.local"),
             admin_password=os.environ.get("OPS_ADMIN_PASSWORD", "changeme"),
-            clickup_employees_list_id=os.environ.get("CLICKUP_EMPLOYEES_LIST_ID"),
             database_url=os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL),
             secret_key=os.environ.get("OPS_SECRET_KEY", "dev-secret-change-me"),
             brain_api_base_url=os.environ.get("BRAIN_API_BASE_URL", "http://localhost:8080"),

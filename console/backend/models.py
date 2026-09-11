@@ -1,7 +1,7 @@
 """Database models.
 
-`users` holds login accounts (auth identities only — people onboarded into the org still live
-in ClickUp, the source of truth). `chat_sessions`/`chat_messages` hold each user's persisted
+`users` holds login accounts (email + password hash + role). `chat_sessions`/`chat_messages`
+hold each user's persisted
 mail-chat conversations (see console/backend/chat.py); the actual Q&A logic still lives in the
 brain service (brain/mail_ask.py) — these tables just remember what was asked/answered and by
 whom.

@@ -1,7 +1,7 @@
 """Ops-console backend (FastAPI).
 
-Reaches integrations only through the typed clients (`clickup/`, `tools/`); core packages never
-import this package (ADR-0002).
+Reaches Slack only through the typed client (`slack/`); core packages never import this
+package (ADR-0002).
 
 Loads `.env` the same way `brain/__init__.py` does. This matters beyond convenience: both
 services verify the *same* JWT, so if only one of them read `.env` they would end up with
