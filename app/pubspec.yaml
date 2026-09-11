@@ -1,0 +1,25 @@
+name: agent_os
+description: Agent OS — your mail and Slack knowledge brain, on Android.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.2
+  provider: ^6.1.2
+  flutter_secure_storage: ^9.2.2
+  path_provider: ^2.1.4
+  url_launcher: ^6.3.0
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
