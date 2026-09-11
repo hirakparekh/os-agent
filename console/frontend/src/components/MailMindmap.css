@@ -101,6 +101,25 @@
   z-index: 5;
 }
 
+.mail-mindmap-download {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 5;
+  background: var(--mm-panel);
+  color: var(--mm-ink);
+  border: 1px solid var(--mm-line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.mail-mindmap-download:hover {
+  border-color: var(--mm-accent);
+  color: var(--mm-accent);
+}
+
 .mail-mindmap-detail {
   position: absolute;
   top: 0;

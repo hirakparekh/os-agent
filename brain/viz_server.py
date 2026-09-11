@@ -198,15 +198,13 @@ def _mail_node(conn: Any, node: dict[str, Any]) -> dict[str, Any]:
         out["body"] = node["data"].get("body")
         out["source_uids"] = node["data"].get("source_uids") or []
         out["classification"] = node["data"].get("classification")
+        out["channel"] = node["data"].get("channel", "gmail")
     if children:
         out["children"] = children
     return out
 
 
-@app.get("/api/mail_tree")
-def mail_tree(conn: ConnDep) -> dict[str, Any]:
-    """The mail knowledge tree (mail_category -> mail_topic -> mail_thread) as nested JSON,
-    rooted under a synthetic "Mail" node so the page always has a single root to render."""
+def _mail_tree_json(conn: Any) -> dict[str, Any]:
     categories = store.all_of_type(conn, "mail_category")
     return {
         "id": "mail:root",
@@ -214,6 +212,49 @@ def mail_tree(conn: ConnDep) -> dict[str, Any]:
         "type": "root",
         "children": [_mail_node(conn, c) for c in categories],
     }
+
+
+@app.get("/api/mail_tree")
+def mail_tree(conn: ConnDep) -> dict[str, Any]:
+    """The mail knowledge tree (mail_category -> mail_topic -> mail_thread) as nested JSON,
+    rooted under a synthetic "Mail" node so the page always has a single root to render."""
+    return _mail_tree_json(conn)
+
+
+_CHANNEL_BADGE = {"gmail": "\U0001f4e7", "slack": "\U0001f4ac"}
+
+
+def _mail_tree_markdown(node: dict[str, Any], depth: int = 0) -> str:
+    """Render the same tree /api/mail_tree serves as human-readable Markdown — a category
+    becomes a ##, a topic a ###, and a thread a bullet with its summary and source channel."""
+    lines: list[str] = []
+    node_type = node.get("type")
+    if node_type == "mail_category":
+        lines.append(f"## {node['name']}\n")
+    elif node_type == "mail_topic":
+        lines.append(f"### {node['name']}\n")
+    elif node_type == "mail_thread":
+        badge = _CHANNEL_BADGE.get(node.get("channel", "gmail"), "")
+        flag = " ⚠️ needs review" if node.get("needs_review") else ""
+        summary = node.get("summary") or "(no summary)"
+        lines.append(f"- {badge} **{node['name']}**{flag} — {summary}\n")
+
+    for child in node.get("children") or []:
+        lines.append(_mail_tree_markdown(child, depth + 1))
+    return "".join(lines)
+
+
+@app.get("/api/mail_tree/export")
+def mail_tree_export(conn: ConnDep) -> Any:
+    """The knowledge tree as a downloadable, plain-text-readable Markdown file — opens in any
+    editor, renders on GitHub, no app required to read it."""
+    tree = _mail_tree_json(conn)
+    body = f"# Mail Knowledge Tree\n\n{_mail_tree_markdown(tree)}"
+    return StreamingResponse(
+        iter([body]),
+        media_type="text/markdown",
+        headers={"Content-Disposition": 'attachment; filename="knowledge-tree.md"'},
+    )
 
 
 class MailReloadRequest(BaseModel):

@@ -4,7 +4,7 @@
 import * as d3 from "d3"
 import { useEffect, useRef, useState } from "react"
 
-import { type MailNode, reclassifyThread } from "@/lib/brainApi"
+import { type MailNode, downloadMailTreeExport, reclassifyThread } from "@/lib/brainApi"
 
 import "./MailMindmap.css"
 
@@ -80,6 +80,18 @@ export function MailMindmap({
   const [moveTo, setMoveTo] = useState("")
   const [moving, setMoving] = useState(false)
   const [moveError, setMoveError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
+
+  async function handleDownload() {
+    setDownloading(true)
+    try {
+      await downloadMailTreeExport()
+    } catch {
+      // Best-effort — a failed download isn't worth its own error UI in this small toolbar.
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   const categoryNames = (data.children || []).map((c) => c.name)
   // ancestors() is [thread, topic, category, root]; the category is the third entry.
@@ -282,6 +294,9 @@ export function MailMindmap({
     <div className="mail-mindmap-root">
       <div className="mail-mindmap-chart" ref={chartRef} />
       <div className="mail-mindmap-hint">scroll to zoom · drag to pan</div>
+      <button className="mail-mindmap-download" onClick={handleDownload} disabled={downloading}>
+        {downloading ? "Downloading…" : "⬇ Download tree (.md)"}
+      </button>
       <div className="mail-mindmap-counts" style={{ position: "absolute", top: 12, left: 16, fontSize: 12, color: "var(--mm-muted)" }}>
         <b style={{ color: "var(--mm-ink)" }}>{counts.mail_category}</b> categories ·{" "}
         <b style={{ color: "var(--mm-ink)" }}>{counts.mail_topic}</b> topics ·{" "}

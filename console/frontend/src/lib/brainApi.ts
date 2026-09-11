@@ -38,7 +38,33 @@ export interface MailNode {
   // filing is findable instead of silently wrong.
   needs_review?: boolean
   classification?: MailClassification | null
+  /** Which channel this thread's most recent message arrived on ("gmail" or "slack"). */
+  channel?: string
   children?: MailNode[]
+}
+
+/**
+ * Download the knowledge tree as Markdown. A plain `<a href download>` can't carry the
+ * Authorization header this endpoint needs, so this fetches the file with auth, then hands the
+ * browser a same-origin blob URL to save — the same trick any authenticated-download UI needs.
+ */
+export async function downloadMailTreeExport(): Promise<void> {
+  const headers = new Headers()
+  const token = getToken()
+  if (token) headers.set("Authorization", `Bearer ${token}`)
+
+  const res = await fetch(`${BASE_URL}/api/mail_tree/export`, { headers })
+  if (!res.ok) throw new BrainApiError(res.status, (await res.text()) || res.statusText)
+
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  a.download = "knowledge-tree.md"
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
 export interface MailReclassifyResult {

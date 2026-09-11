@@ -313,3 +313,30 @@ def test_analytics_category_volume_buckets_by_day(client, conn):
 def test_analytics_category_volume_rejects_an_invalid_bucket(client):
     res = client.get("/api/analytics/category-volume?bucket=month")
     assert res.status_code == 400
+
+
+def test_mail_tree_export_renders_markdown_with_category_topic_and_thread(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    store.upsert(
+        conn, "mail_thread",
+        {"source_id": "mail:thread:1", "title": "Interview shortlist", "body": "b",
+         "source_uids": ["1"], "channel": "slack"},
+        title="Interview shortlist", summary="Shortlisted for round 1.", source="mail",
+    )
+    store.add_edge(conn, topic, "mail:thread:1", "contains")
+
+    res = client.get("/api/mail_tree/export")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("text/markdown")
+    assert 'filename="knowledge-tree.md"' in res.headers["content-disposition"]
+
+    text = res.text
+    assert "## Placements" in text
+    assert "### Accenture" in text
+    assert "Interview shortlist" in text
+    assert "Shortlisted for round 1." in text
+
+
+def test_mail_tree_export_requires_authentication():
+    with TestClient(viz_server.app) as anonymous:
+        assert anonymous.get("/api/mail_tree/export").status_code == 401
