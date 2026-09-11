@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import copy
+import difflib
 import json
 import re
 import subprocess
@@ -532,6 +533,37 @@ def merge_or_create_thread(
 # (MIN_ABSOLUTE_SCORE), tuned empirically the same way.
 OFFLINE_MERGE_THRESHOLD = 2.0
 
+# A same-topic candidate whose body text is at least this similar to a new message is treated
+# as the same announcement arriving twice (e.g. via mail and Slack), not a new round — high
+# enough that two genuinely different rounds of the same process ("Round 1"/"Round 2") stay
+# distinct threads, since their bodies differ far more than a verbatim repost does.
+DUPLICATE_SIMILARITY_THRESHOLD = 0.85
+
+
+def _find_duplicate_thread(
+    body_text: str, existing_threads: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """The existing thread (if any) whose body text is a near-duplicate of `body_text`.
+
+    Uses difflib.SequenceMatcher — the same primitive brain/resolver.py already uses for
+    fuzzy matching — rather than the LLM's or BM25's topic-level judgment, since "is this the
+    same announcement" is a finer-grained question than "is this the same topic". Runs before
+    both the LLM and offline merge paths so a duplicate is caught regardless of which one is
+    active (see _ingest_message).
+    """
+    body_text = (body_text or "").strip()
+    if not body_text:
+        return None
+    best_thread, best_ratio = None, 0.0
+    for t in existing_threads:
+        existing_body = (t.get("data", {}).get("body") or "").strip()
+        if not existing_body:
+            continue
+        ratio = difflib.SequenceMatcher(None, body_text, existing_body).ratio()
+        if ratio > best_ratio:
+            best_thread, best_ratio = t, ratio
+    return best_thread if best_ratio >= DUPLICATE_SIMILARITY_THRESHOLD else None
+
 
 def _offline_merge_or_create_thread(
     email: dict[str, Any], existing_threads: list[dict[str, Any]]
@@ -995,16 +1027,29 @@ def _ingest_message(
             for n in store.neighbors(conn, t["id"], "contains", incoming=True)
         )
     ]
-    decision = (
-        _offline_merge_or_create_thread(message, existing_threads)
-        if offline
-        else merge_or_create_thread(message, findings, existing_threads)
-    )
+    duplicate_thread = _find_duplicate_thread(message.get("body_text", "") or "", existing_threads)
+    if duplicate_thread:
+        # Same announcement, second copy (e.g. mail + Slack) — collapse into the existing
+        # thread untouched rather than treating it as a new round or a fresh thread.
+        decision = {
+            "action": "duplicate",
+            "merge_into_id": duplicate_thread["id"],
+            "summary": duplicate_thread.get("summary") or "",
+            "body": duplicate_thread.get("data", {}).get("body") or "",
+            "event": {"has_event": False, "title": "", "start": "", "end": "", "location": ""},
+        }
+    else:
+        decision = (
+            _offline_merge_or_create_thread(message, existing_threads)
+            if offline
+            else merge_or_create_thread(message, findings, existing_threads)
+        )
 
     # Validate against every real thread, not just this topic's existing_threads: a merge target
     # from a different topic is legitimate (reclassification), a fully hallucinated id is not.
     valid_thread_ids = {t["id"] for t in store.all_of_type(conn, "mail_thread")}
-    if decision["action"] == "merge" and decision.get("merge_into_id") in valid_thread_ids:
+    merges = decision["action"] in ("merge", "duplicate")
+    if merges and decision.get("merge_into_id") in valid_thread_ids:
         thread_id = decision["merge_into_id"]
         existing_thread = store.get(conn, thread_id)
         prior_uids = (

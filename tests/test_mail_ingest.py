@@ -1463,3 +1463,60 @@ def test_ingest_email_action_items_accumulate_across_merges(tmp_path, monkeypatc
     texts = [i["text"].lower() for i in thread["data"]["action_items"]]
     assert any(t.startswith("submit") for t in texts)
     assert any(t.startswith("reply") for t in texts)
+
+
+def test_find_duplicate_thread_matches_near_identical_body_only():
+    announcement = (
+        "The Training and Placement Cell is pleased to announce a Yoga Competition on 12 "
+        "March 2026. Register via the Google Form link below."
+    )
+    existing = [{"id": "mail:thread:1", "summary": "s", "data": {"body": announcement}}]
+
+    # Verbatim repost (e.g. via a second channel) — matches.
+    assert mail_ingest._find_duplicate_thread(announcement, existing)["id"] == "mail:thread:1"
+    # A different round of the same process — different body, must NOT match.
+    different_round = "Interview Round 2 shortlist: please confirm your slot for Friday."
+    assert mail_ingest._find_duplicate_thread(different_round, existing) is None
+    # No existing threads at all.
+    assert mail_ingest._find_duplicate_thread(announcement, []) is None
+
+
+def test_ingest_message_collapses_a_duplicate_announcement_across_channels(tmp_path, monkeypatch):
+    conn = _conn(tmp_path)
+    subject = "Bada Khana - Special Lunch"
+    body = (
+        "Join us for a special lunch this Sunday, 06 September 2026, at the main mess. "
+        "Menu details are attached."
+    )
+    monkeypatch.setattr(
+        mail_ingest, "classify_email",
+        lambda message, findings, categories: {
+            "category": "General College", "new_category": True,
+            "topic": subject, "new_topic": True,
+        },
+    )
+    monkeypatch.setattr(
+        mail_ingest, "merge_or_create_thread",
+        lambda message, findings, existing: {
+            "action": "new", "merge_into_id": None, "summary": "s", "body": message["body_text"],
+        },
+    )
+    gmail = _email(uid="1", subject=subject)
+    gmail["body_text"] = body
+    gmail_result = mail_ingest._ingest_message(conn, gmail, _defaults(), channel="gmail")
+
+    def _raise_if_merge_called(*_args, **_kwargs):
+        raise AssertionError("merge_or_create_thread must be skipped for a detected duplicate")
+
+    monkeypatch.setattr(mail_ingest, "merge_or_create_thread", _raise_if_merge_called)
+    slack_message = {
+        "uid": "1700000000.000200", "from": "U1", "subject": subject,
+        "body_text": body, "attachments": [],
+    }
+    slack_result = mail_ingest._ingest_message(conn, slack_message, _defaults(), channel="slack")
+
+    assert slack_result["thread_id"] == gmail_result["thread_id"]
+    assert slack_result["action"] == "duplicate"
+    thread = store.get(conn, gmail_result["thread_id"])
+    assert thread["data"]["source_uids"] == ["1", "1700000000.000200"]
+    assert thread["data"]["body"] == body  # untouched, not re-synthesized
