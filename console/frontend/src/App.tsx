@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion"
 
 import { getHealth, getMe } from "@/api"
 import { clearToken, getToken, onAuthChange, setRole, setToken } from "@/auth"
-import { getMailStatus, getMailTree } from "@/lib/brainApi"
+import { getCalendarStatus, getMailStatus, getMailTree } from "@/lib/brainApi"
 import { Analytics } from "@/pages/Analytics"
 import { Applications } from "@/pages/Applications"
 import { Chat } from "@/pages/Chat"
@@ -87,18 +87,28 @@ export default function App() {
     if (!token) return
     let cancelled = false
 
-    Promise.all([getHealth(), getMailStatus().catch(() => ({ connected: false }))]).then(
-      ([health, mail]) => {
-        if (cancelled) return
-        const connected = health.integrations.filter((i) => i.status === "configured").length
-        setRail((r) => ({
-          ...r,
-          appsConnected: connected + (mail.connected ? 1 : 0),
-          appsTotal: health.integrations.length + 1,
-          mailConnected: mail.connected,
-        }))
-      },
-    )
+    // The rail's "connections" count is exactly the three cards the Integrations page actually
+    // shows (Gmail, Google Calendar, Slack) — not console/backend's /health, which still
+    // reports clickup/fathom even though neither has a UI card anymore (see console/backend/
+    // health.py). Counting those as part of the denominator is what produced the wrong "2/4".
+    Promise.all([
+      getHealth(),
+      getMailStatus().catch(() => ({ connected: false })),
+      getCalendarStatus().catch(() => ({ connected: false })),
+    ]).then(([health, mail, calendar]) => {
+      if (cancelled) return
+      const slackConnected = health.integrations.some(
+        (i) => i.name === "slack" && i.status === "configured",
+      )
+      const connected =
+        (mail.connected ? 1 : 0) + (calendar.connected ? 1 : 0) + (slackConnected ? 1 : 0)
+      setRail((r) => ({
+        ...r,
+        appsConnected: connected,
+        appsTotal: 3,
+        mailConnected: mail.connected,
+      }))
+    })
 
     getMailTree()
       .then((tree) => {
