@@ -26,7 +26,10 @@ def format_answer(res: dict[str, Any]) -> str:
     path = res.get("path") or []
     if path:
         lines.append("")
-        lines.append("*Sources — the path I walked:* " + ", ".join(f"{n['type']}: {n['title']}" for n in path))
+        lines.append(
+            "*Sources — the path I walked:* "
+            + ", ".join(f"{n['type']}: {n['title']}" for n in path)
+        )
     return "\n".join(lines)
 
 

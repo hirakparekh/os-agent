@@ -66,16 +66,18 @@ def test_guess_category_bm25_returns_none_below_the_absolute_floor():
 
 
 def test_classify_email_parses_llm_json(monkeypatch):
-    reply = (
-        '{"category": "Placements", "new_category": false, '
-        '"topic": "Acme", "new_topic": true}'
-    )
+    reply = '{"category": "Placements", "new_category": false, "topic": "Acme", "new_topic": true}'
     monkeypatch.setattr(mail_ingest, "call_openrouter", lambda prompt: reply)
     result = mail_ingest.classify_email(
-        {"from": "a@x.com", "subject": "Interview", "body_text": "..."}, [], [],
+        {"from": "a@x.com", "subject": "Interview", "body_text": "..."},
+        [],
+        [],
     )
     assert result == {
-        "category": "Placements", "new_category": False, "topic": "Acme", "new_topic": True,
+        "category": "Placements",
+        "new_category": False,
+        "topic": "Acme",
+        "new_topic": True,
     }
 
 
@@ -91,11 +93,14 @@ def test_classify_email_strips_markdown_fences(monkeypatch):
 
 def test_merge_or_create_thread_parses_llm_json(monkeypatch):
     monkeypatch.setattr(
-        mail_ingest, "call_openrouter",
+        mail_ingest,
+        "call_openrouter",
         lambda prompt: '{"action": "new", "merge_into_id": null, "summary": "s", "body": "b"}',
     )
     result = mail_ingest.merge_or_create_thread(
-        {"from": "a", "subject": "s", "body_text": "b"}, [], [],
+        {"from": "a", "subject": "s", "body_text": "b"},
+        [],
+        [],
     )
     assert result["action"] == "new"
     assert result["body"] == "b"
@@ -107,8 +112,12 @@ def _conn(tmp_path):
 
 def _email(uid="1", subject="Interview Round 1"):
     return {
-        "uid": uid, "from": "hr@acme.com", "to": "me@x.com", "subject": subject,
-        "body_text": "...", "attachments": [],
+        "uid": uid,
+        "from": "hr@acme.com",
+        "to": "me@x.com",
+        "subject": subject,
+        "body_text": "...",
+        "attachments": [],
     }
 
 
@@ -126,15 +135,23 @@ def _defaults():
 
 def _fake_llm(monkeypatch, category, topic="Some Topic"):
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
+        mail_ingest,
+        "classify_email",
         lambda email, findings, categories: {
-            "category": category, "new_category": True, "topic": topic, "new_topic": True,
+            "category": category,
+            "new_category": True,
+            "topic": topic,
+            "new_topic": True,
         },
     )
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda email, findings, existing: {
-            "action": "new", "merge_into_id": None, "summary": "s", "body": "b",
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "s",
+            "body": "b",
         },
     )
 
@@ -171,16 +188,23 @@ def test_ingest_email_overrides_llm_category_with_confident_bm25_guess(tmp_path,
 def test_ingest_email_creates_category_topic_and_thread(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
+        mail_ingest,
+        "classify_email",
         lambda email, findings, categories: {
-            "category": "Placements", "new_category": True, "topic": "Acme", "new_topic": True,
+            "category": "Placements",
+            "new_category": True,
+            "topic": "Acme",
+            "new_topic": True,
         },
     )
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda email, findings, existing: {
-            "action": "new", "merge_into_id": None,
-            "summary": "Interview scheduled.", "body": "Round 1 interview on Monday.",
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "Interview scheduled.",
+            "body": "Round 1 interview on Monday.",
         },
     )
     result = mail_ingest.ingest_email(conn, _email(), {"student_id": "", "resume_path": ""})
@@ -197,24 +221,33 @@ def test_ingest_email_creates_category_topic_and_thread(tmp_path, monkeypatch):
 def test_ingest_email_merges_second_related_email_into_same_thread(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
+        mail_ingest,
+        "classify_email",
         lambda email, findings, categories: {
-            "category": "Placements", "new_category": True, "topic": "Acme", "new_topic": True,
+            "category": "Placements",
+            "new_category": True,
+            "topic": "Acme",
+            "new_topic": True,
         },
     )
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda email, findings, existing: {
-            "action": "new", "merge_into_id": None,
-            "summary": "Interview scheduled.", "body": "Round 1 interview.",
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "Interview scheduled.",
+            "body": "Round 1 interview.",
         },
     )
     first = mail_ingest.ingest_email(conn, _email(uid="1"), {"student_id": "", "resume_path": ""})
 
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda email, findings, existing: {
-            "action": "merge", "merge_into_id": first["thread_id"],
+            "action": "merge",
+            "merge_into_id": first["thread_id"],
             "summary": "Interview + PPT scheduled.",
             "body": "Round 1 interview.\nPPT on Wednesday.",
         },
@@ -232,7 +265,8 @@ def test_ingest_email_merges_second_related_email_into_same_thread(tmp_path, mon
 def test_run_marks_read_only_on_success(monkeypatch, tmp_path):
     conn = _conn(tmp_path)
     monkeypatch.setattr(
-        mail_ingest, "fetch_unread_emails",
+        mail_ingest,
+        "fetch_unread_emails",
         lambda since_minutes=None, user_id=None: [_email(uid="1"), _email(uid="2", subject="bad")],
     )
 
@@ -240,8 +274,11 @@ def test_run_marks_read_only_on_success(monkeypatch, tmp_path):
         if email["uid"] == "2":
             raise ValueError("boom")
         return {
-            "uid": email["uid"], "category": "C", "topic": "T",
-            "thread_id": "mail:thread:1", "action": "new",
+            "uid": email["uid"],
+            "category": "C",
+            "topic": "T",
+            "thread_id": "mail:thread:1",
+            "action": "new",
         }
 
     monkeypatch.setattr(mail_ingest, "ingest_email", fake_ingest)
@@ -261,16 +298,21 @@ def test_run_marks_read_only_on_success(monkeypatch, tmp_path):
 def test_run_marks_read_failure_does_not_abort_batch(monkeypatch, tmp_path):
     conn = _conn(tmp_path)
     monkeypatch.setattr(
-        mail_ingest, "fetch_unread_emails",
+        mail_ingest,
+        "fetch_unread_emails",
         lambda since_minutes=None, user_id=None: [
-            _email(uid="1"), _email(uid="2", subject="second"),
+            _email(uid="1"),
+            _email(uid="2", subject="second"),
         ],
     )
 
     def fake_ingest(conn_, email, config, user_id=None):
         return {
-            "uid": email["uid"], "category": "C", "topic": "T",
-            "thread_id": f"mail:thread:{email['uid']}", "action": "new",
+            "uid": email["uid"],
+            "category": "C",
+            "topic": "T",
+            "thread_id": f"mail:thread:{email['uid']}",
+            "action": "new",
         }
 
     def fake_mark_read(uid, user_id=None):
@@ -292,16 +334,23 @@ def test_run_marks_read_failure_does_not_abort_batch(monkeypatch, tmp_path):
 def test_ingest_email_ignores_hallucinated_merge_into_id(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
+        mail_ingest,
+        "classify_email",
         lambda email, findings, categories: {
-            "category": "Placements", "new_category": True, "topic": "Acme", "new_topic": True,
+            "category": "Placements",
+            "new_category": True,
+            "topic": "Acme",
+            "new_topic": True,
         },
     )
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda email, findings, existing: {
-            "action": "merge", "merge_into_id": "mail:thread:does-not-exist",
-            "summary": "s", "body": "b",
+            "action": "merge",
+            "merge_into_id": "mail:thread:does-not-exist",
+            "summary": "s",
+            "body": "b",
         },
     )
     result = mail_ingest.ingest_email(conn, _email(uid="1"), {"student_id": "", "resume_path": ""})
@@ -315,32 +364,46 @@ def test_ingest_email_ignores_hallucinated_merge_into_id(tmp_path, monkeypatch):
 def test_ingest_email_reclassified_thread_has_single_parent(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
+        mail_ingest,
+        "classify_email",
         lambda email, findings, categories: {
-            "category": "Placements", "new_category": True, "topic": "Acme", "new_topic": True,
+            "category": "Placements",
+            "new_category": True,
+            "topic": "Acme",
+            "new_topic": True,
         },
     )
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda email, findings, existing: {
-            "action": "new", "merge_into_id": None,
-            "summary": "s1", "body": "Round 1 interview.",
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "s1",
+            "body": "Round 1 interview.",
         },
     )
     first = mail_ingest.ingest_email(conn, _email(uid="1"), {"student_id": "", "resume_path": ""})
     thread_id = first["thread_id"]
 
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
+        mail_ingest,
+        "classify_email",
         lambda email, findings, categories: {
-            "category": "Placements", "new_category": False, "topic": "Beta", "new_topic": True,
+            "category": "Placements",
+            "new_category": False,
+            "topic": "Beta",
+            "new_topic": True,
         },
     )
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda email, findings, existing: {
-            "action": "merge", "merge_into_id": thread_id,
-            "summary": "s2", "body": "Reclassified into Beta.",
+            "action": "merge",
+            "merge_into_id": thread_id,
+            "summary": "s2",
+            "body": "Reclassified into Beta.",
         },
     )
     reclassified_email = _email(uid="2", subject="PPT")
@@ -361,13 +424,18 @@ def test_ingest_email_includes_seeded_categories_not_yet_stored(tmp_path, monkey
 
     monkeypatch.setattr(mail_ingest, "classify_email", fake_classify)
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda email, findings, existing: {
-            "action": "new", "merge_into_id": None, "summary": "s", "body": "b",
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "s",
+            "body": "b",
         },
     )
     mail_ingest.ingest_email(
-        conn, _email(uid="1"),
+        conn,
+        _email(uid="1"),
         {"student_id": "", "resume_path": "", "seeded_categories": ["Placements", "Banking"]},
     )
 
@@ -379,25 +447,35 @@ def test_ingest_email_includes_seeded_categories_not_yet_stored(tmp_path, monkey
 def test_ingest_email_merge_preserves_title_and_accumulates_source(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
+        mail_ingest,
+        "classify_email",
         lambda email, findings, categories: {
-            "category": "Placements", "new_category": True, "topic": "Acme", "new_topic": True,
+            "category": "Placements",
+            "new_category": True,
+            "topic": "Acme",
+            "new_topic": True,
         },
     )
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda email, findings, existing: {
-            "action": "new", "merge_into_id": None,
-            "summary": "s1", "body": "Round 1 interview.",
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "s1",
+            "body": "Round 1 interview.",
         },
     )
     first = mail_ingest.ingest_email(conn, _email(uid="1", subject="Round 1"), {})
 
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda email, findings, existing: {
-            "action": "merge", "merge_into_id": first["thread_id"],
-            "summary": "s2", "body": "Round 1 interview.\nPPT on Wednesday.",
+            "action": "merge",
+            "merge_into_id": first["thread_id"],
+            "summary": "s2",
+            "body": "Round 1 interview.\nPPT on Wednesday.",
         },
     )
     mail_ingest.ingest_email(conn, _email(uid="2", subject="PPT"), {})
@@ -550,7 +628,9 @@ def test_ingest_yoga_competition_email_is_filed_under_general_college(tmp_path, 
 def test_ingest_off_campus_drive_email_is_still_placements(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     email = {
-        "uid": "5", "from": "tpcell@college.edu", "to": "me@x.com",
+        "uid": "5",
+        "from": "tpcell@college.edu",
+        "to": "me@x.com",
         "subject": "Accenture Off-Campus Drive 2026",
         "body_text": (
             "Eligibility criteria: 7 CGPA. Stipend 25k, CTC 6 LPA. Shortlisted students will "
@@ -567,7 +647,9 @@ def test_ingest_off_campus_drive_email_is_still_placements(tmp_path, monkeypatch
 def test_ingest_guest_lecture_email_is_lectures_and_profs(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     email = {
-        "uid": "6", "from": "hod@college.edu", "to": "me@x.com",
+        "uid": "6",
+        "from": "hod@college.edu",
+        "to": "me@x.com",
         "subject": "Guest Lecture on Compilers",
         "body_text": "A guest lecture by a visiting professor. Register via the Google Form.",
         "attachments": [],
@@ -580,7 +662,9 @@ def test_ingest_guest_lecture_email_is_lectures_and_profs(tmp_path, monkeypatch)
 def test_ingest_sports_day_organised_by_placement_cell_is_general_college(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     email = {
-        "uid": "7", "from": "tpcell@college.edu", "to": "me@x.com",
+        "uid": "7",
+        "from": "tpcell@college.edu",
+        "to": "me@x.com",
         "subject": "Annual Sports Day 2026",
         "body_text": "Organised by the Training and Placement Cell. Register via Google Form.",
         "attachments": [],
@@ -595,8 +679,11 @@ def test_ingest_low_confidence_thread_is_flagged_for_review(tmp_path, monkeypatc
     # Deliberately hits no keyword in any category, so the vocabulary has nothing to say and
     # the LLM invents a category — row 6 of the arbitration table.
     email = {
-        "uid": "8", "from": "office@college.edu", "to": "me@x.com",
-        "subject": "Regarding your query", "body_text": "Please see the attached document.",
+        "uid": "8",
+        "from": "office@college.edu",
+        "to": "me@x.com",
+        "subject": "Regarding your query",
+        "body_text": "Please see the attached document.",
         "attachments": [],
     }
     _fake_llm(monkeypatch, "Totally Invented Category", topic="Query")
@@ -669,8 +756,12 @@ def test_prune_empty_mail_nodes_keeps_populated_branches(tmp_path):
     conn = _conn(tmp_path)
     topic_id = mail_ingest.ensure_topic(conn, "Placements", "Acme")
     store.upsert(
-        conn, "mail_thread", {"source_id": "mail:thread:1", "title": "t"},
-        title="t", summary="s", source="mail:1",
+        conn,
+        "mail_thread",
+        {"source_id": "mail:thread:1", "title": "t"},
+        title="t",
+        summary="s",
+        source="mail:1",
     )
     store.add_edge(conn, topic_id, "mail:thread:1", "contains")
     assert mail_ingest.prune_empty_mail_nodes(conn) == []
@@ -731,8 +822,11 @@ def test_learned_keywords_steer_a_later_email(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     # "sangeet" is in no default vocabulary, so this email has no signal at all...
     email = {
-        "uid": "301", "from": "office@college.edu", "to": "me@x.com",
-        "subject": "Sangeet auditions", "body_text": "Auditions will be held shortly.",
+        "uid": "301",
+        "from": "office@college.edu",
+        "to": "me@x.com",
+        "subject": "Sangeet auditions",
+        "body_text": "Auditions will be held shortly.",
         "attachments": [],
     }
     _fake_llm(monkeypatch, "Placements", topic="Sangeet")
@@ -791,16 +885,22 @@ def test_a_corrected_thread_is_not_dragged_back_by_a_later_email(tmp_path, monke
 
     # A follow-up arrives that scores overwhelmingly as Placements and merges into that thread.
     follow_up = {
-        "uid": "402", "from": "tpcell@college.edu", "to": "me@x.com",
+        "uid": "402",
+        "from": "tpcell@college.edu",
+        "to": "me@x.com",
         "subject": "Accenture Off-Campus Drive - interview shortlisted",
         "body_text": "Eligibility criteria and stipend details.",
         "attachments": [],
     }
     _fake_llm(monkeypatch, "Placements", topic="Accenture")
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda email, findings, existing: {
-            "action": "merge", "merge_into_id": thread_id, "summary": "s", "body": "b",
+            "action": "merge",
+            "merge_into_id": thread_id,
+            "summary": "s",
+            "body": "b",
         },
     )
     result = mail_ingest.ingest_email(conn, follow_up, _defaults())
@@ -819,23 +919,32 @@ def test_an_uncorrected_thread_still_gets_reclassified_on_merge(tmp_path, monkey
     thread_id = "mail:thread:501"
     topic_id = mail_ingest.ensure_topic(conn, "General College", "Something")
     store.upsert(
-        conn, "mail_thread",
+        conn,
+        "mail_thread",
         {"source_id": thread_id, "title": "Something", "body": "b", "source_uids": ["501"]},
-        title="Something", summary="s", source="mail:501",
+        title="Something",
+        summary="s",
+        source="mail:501",
     )
     store.add_edge(conn, topic_id, thread_id, "contains")
 
     follow_up = {
-        "uid": "502", "from": "tpcell@college.edu", "to": "me@x.com",
+        "uid": "502",
+        "from": "tpcell@college.edu",
+        "to": "me@x.com",
         "subject": "Accenture Off-Campus Drive - interview shortlisted",
         "body_text": "Eligibility criteria and stipend details.",
         "attachments": [],
     }
     _fake_llm(monkeypatch, "Placements", topic="Accenture")
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda email, findings, existing: {
-            "action": "merge", "merge_into_id": thread_id, "summary": "s", "body": "b",
+            "action": "merge",
+            "merge_into_id": thread_id,
+            "summary": "s",
+            "body": "b",
         },
     )
     result = mail_ingest.ingest_email(conn, follow_up, _defaults())
@@ -863,7 +972,9 @@ def test_ingest_persists_attachment_findings(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     sheet = _xlsx(tmp_path, [["Reg No", "Name"], ["23BCE1234", "Adidev Anand"]])
     email = {
-        "uid": "601", "from": "tpcell@college.edu", "to": "me@x.com",
+        "uid": "601",
+        "from": "tpcell@college.edu",
+        "to": "me@x.com",
         "subject": "Hevo Data shortlist",
         "body_text": "The shortlist is attached.",
         "attachments": [{"saved_to": str(sheet)}],
@@ -883,8 +994,11 @@ def test_ingest_reports_when_a_shortlist_omits_you(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     sheet = _xlsx(tmp_path, [["Reg No", "Name"], ["23BCE0001", "Someone Else"]])
     email = {
-        "uid": "602", "from": "tpcell@college.edu", "to": "me@x.com",
-        "subject": "Shortlist", "body_text": "Attached.",
+        "uid": "602",
+        "from": "tpcell@college.edu",
+        "to": "me@x.com",
+        "subject": "Shortlist",
+        "body_text": "Attached.",
         "attachments": [{"saved_to": str(sheet)}],
     }
     _fake_llm(monkeypatch, "Placements", topic="Shortlist")
@@ -904,22 +1018,32 @@ def test_merged_thread_keeps_attachments_from_earlier_emails(tmp_path, monkeypat
     _fake_llm(monkeypatch, "Placements", topic="Hevo Data")
 
     first = {
-        "uid": "603", "from": "tpcell@college.edu", "to": "me@x.com",
-        "subject": "Hevo shortlist", "body_text": "Attached.",
+        "uid": "603",
+        "from": "tpcell@college.edu",
+        "to": "me@x.com",
+        "subject": "Hevo shortlist",
+        "body_text": "Attached.",
         "attachments": [{"saved_to": str(sheet)}],
     }
     thread_id = mail_ingest.ingest_email(conn, first, config)["thread_id"]
 
     # A follow-up with no attachment merges into the same thread.
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda email, findings, existing: {
-            "action": "merge", "merge_into_id": thread_id, "summary": "s", "body": "b",
+            "action": "merge",
+            "merge_into_id": thread_id,
+            "summary": "s",
+            "body": "b",
         },
     )
     second = {
-        "uid": "604", "from": "tpcell@college.edu", "to": "me@x.com",
-        "subject": "Hevo shortlist — interview slots", "body_text": "Slots below.",
+        "uid": "604",
+        "from": "tpcell@college.edu",
+        "to": "me@x.com",
+        "subject": "Hevo shortlist — interview slots",
+        "body_text": "Slots below.",
         "attachments": [],
     }
     mail_ingest.ingest_email(conn, second, config)
@@ -937,8 +1061,11 @@ def test_attachment_identifiers_come_from_the_stored_profile(tmp_path, monkeypat
 
     sheet = _xlsx(tmp_path, [["Reg No", "Name"], ["23BCE1234", "Adidev Anand"]])
     email = {
-        "uid": "701", "from": "tpcell@college.edu", "to": "me@x.com",
-        "subject": "Hevo Data shortlist", "body_text": "Attached.",
+        "uid": "701",
+        "from": "tpcell@college.edu",
+        "to": "me@x.com",
+        "subject": "Hevo Data shortlist",
+        "body_text": "Attached.",
         "attachments": [{"saved_to": str(sheet)}],
     }
     _fake_llm(monkeypatch, "Placements", topic="Hevo Data")
@@ -957,8 +1084,11 @@ def test_a_non_identity_profile_row_is_not_used_for_matching(tmp_path, monkeypat
 
     sheet = _xlsx(tmp_path, [["Dept"], ["Placements"]])
     email = {
-        "uid": "702", "from": "tpcell@college.edu", "to": "me@x.com",
-        "subject": "Dept list", "body_text": "Attached.",
+        "uid": "702",
+        "from": "tpcell@college.edu",
+        "to": "me@x.com",
+        "subject": "Dept list",
+        "body_text": "Attached.",
         "attachments": [{"saved_to": str(sheet)}],
     }
     _fake_llm(monkeypatch, "Placements", topic="Dept list")
@@ -973,8 +1103,14 @@ def test_a_non_identity_profile_row_is_not_used_for_matching(tmp_path, monkeypat
 
 def _two_emails(monkeypatch, subjects=("First mail", "Second mail")):
     emails = [
-        {"uid": str(i), "from": "a@b.com", "to": "me@x.com", "subject": s,
-         "body_text": "...", "attachments": []}
+        {
+            "uid": str(i),
+            "from": "a@b.com",
+            "to": "me@x.com",
+            "subject": s,
+            "body_text": "...",
+            "attachments": [],
+        }
         for i, s in enumerate(subjects, start=1)
     ]
     monkeypatch.setattr(
@@ -1043,8 +1179,14 @@ def test_run_iter_keeps_going_after_one_bad_email(tmp_path, monkeypatch):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("boom")
-        return {"uid": email["uid"], "category": "C", "topic": "T",
-                "thread_id": "mail:thread:2", "action": "new", "confidence": "high"}
+        return {
+            "uid": email["uid"],
+            "category": "C",
+            "topic": "T",
+            "thread_id": "mail:thread:2",
+            "action": "new",
+            "confidence": "high",
+        }
 
     monkeypatch.setattr(mail_ingest, "ingest_email", flaky)
     events = list(mail_ingest.run_iter(conn))
@@ -1073,10 +1215,17 @@ def test_run_still_returns_just_the_results(tmp_path, monkeypatch):
 
 def _filed(conn, thread_id, sender, category, *, corrected=False):
     store.upsert(
-        conn, "mail_thread",
-        {"source_id": thread_id, "title": "t", "sender": sender,
-         "classification": {"category": category, "corrected_by_user": corrected}},
-        title="t", summary="s", source="mail",
+        conn,
+        "mail_thread",
+        {
+            "source_id": thread_id,
+            "title": "t",
+            "sender": sender,
+            "classification": {"category": category, "corrected_by_user": corrected},
+        },
+        title="t",
+        summary="s",
+        source="mail",
     )
 
 
@@ -1087,13 +1236,11 @@ def test_sender_precedent_is_none_without_history(tmp_path):
 def test_sender_precedent_finds_where_that_sender_was_filed(tmp_path):
     conn = _conn(tmp_path)
     _filed(conn, "mail:thread:1", "Google <no-reply@accounts.google.com>", "Security Alerts")
-    assert (
-        mail_ingest.sender_precedent(conn, "no-reply@accounts.google.com") == "Security Alerts"
-    )
+    assert mail_ingest.sender_precedent(conn, "no-reply@accounts.google.com") == "Security Alerts"
 
 
 def test_sender_precedent_ignores_the_display_name(tmp_path):
-    """"Google <x@y>" and "Google Accounts <x@y>" are the same sender."""
+    """ "Google <x@y>" and "Google Accounts <x@y>" are the same sender."""
     conn = _conn(tmp_path)
     _filed(conn, "mail:thread:1", "Google <no-reply@accounts.google.com>", "Security Alerts")
     assert (
@@ -1112,11 +1259,8 @@ def test_a_human_correction_outweighs_repeated_auto_filings(tmp_path):
     conn = _conn(tmp_path)
     for i in range(3):
         _filed(conn, f"mail:thread:{i}", "no-reply@accounts.google.com", "Placements")
-    _filed(conn, "mail:thread:9", "no-reply@accounts.google.com", "Security Alerts",
-           corrected=True)
-    assert (
-        mail_ingest.sender_precedent(conn, "no-reply@accounts.google.com") == "Security Alerts"
-    )
+    _filed(conn, "mail:thread:9", "no-reply@accounts.google.com", "Security Alerts", corrected=True)
+    assert mail_ingest.sender_precedent(conn, "no-reply@accounts.google.com") == "Security Alerts"
 
 
 def test_precedent_decides_when_keywords_have_nothing_to_say():
@@ -1124,7 +1268,8 @@ def test_precedent_decides_when_keywords_have_nothing_to_say():
     ranked = [("General College", 0.0), ("Placements", 0.0)]
     # Without precedent the LLM's invented category wins, and is flagged for review.
     assert mail_ingest.arbitrate_category("Whatever", ranked, {"Placements"}) == (
-        "Whatever", "low",
+        "Whatever",
+        "low",
     )
     # With precedent the answer is deterministic and the LLM is ignored.
     assert mail_ingest.arbitrate_category(
@@ -1152,19 +1297,28 @@ def test_two_identical_emails_from_one_sender_land_together(tmp_path, monkeypatc
     """The reported symptom, end to end: same sender, same mail, one destination."""
     conn = _conn(tmp_path)
     alert = {
-        "uid": "1", "from": "Google <no-reply@accounts.google.com>", "to": "me@x.com",
+        "uid": "1",
+        "from": "Google <no-reply@accounts.google.com>",
+        "to": "me@x.com",
         "subject": "Security alert",
-        "body_text": "A new sign-in to your Google Account.", "attachments": [],
+        "body_text": "A new sign-in to your Google Account.",
+        "attachments": [],
     }
     # The model is unstable on this mail — a different answer each time.
     answers = iter(["Security Alerts", "Placements"])
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
-        lambda e, f, c: {"category": next(answers), "new_category": True,
-                         "topic": "Google Account", "new_topic": True},
+        mail_ingest,
+        "classify_email",
+        lambda e, f, c: {
+            "category": next(answers),
+            "new_category": True,
+            "topic": "Google Account",
+            "new_topic": True,
+        },
     )
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda e, f, x: {"action": "new", "merge_into_id": None, "summary": "s", "body": "b"},
     )
 
@@ -1193,8 +1347,11 @@ def test_rescan_finds_you_after_an_identifier_is_added(tmp_path, monkeypatch):
     # Ingested while the profile knew only a name that does not appear in the sheet.
     brain_profile.save_profile(conn, [{"key": "Name", "value": "Adidev Anand"}])
     email = {
-        "uid": "601", "from": "tpcell@college.edu", "to": "me@x.com",
-        "subject": "Shortlist", "body_text": "Attached.",
+        "uid": "601",
+        "from": "tpcell@college.edu",
+        "to": "me@x.com",
+        "subject": "Shortlist",
+        "body_text": "Attached.",
         "attachments": [{"saved_to": str(sheet)}],
     }
     _fake_llm(monkeypatch, "Placements", topic="Shortlist")
@@ -1223,7 +1380,10 @@ def test_rescan_reports_nothing_when_the_answer_is_unchanged(tmp_path, monkeypat
 
     brain_profile.save_profile(conn, [{"key": "Neo ID", "value": "T7M8V0L5"}])
     email = {
-        "uid": "602", "from": "x@y.com", "to": "me@x.com", "subject": "S",
+        "uid": "602",
+        "from": "x@y.com",
+        "to": "me@x.com",
+        "subject": "S",
         "body_text": "Attached.",
         "attachments": [{"saved_to": str(cache / "602__shortlist.xlsx")}],
     }
@@ -1242,7 +1402,10 @@ def test_rescan_preserves_the_rest_of_the_thread(tmp_path, monkeypatch):
     _xlsx(cache, [["NEOID"], ["T7M8V0L5"]], name="603__shortlist.xlsx")
 
     email = {
-        "uid": "603", "from": "x@y.com", "to": "me@x.com", "subject": "Keep my body",
+        "uid": "603",
+        "from": "x@y.com",
+        "to": "me@x.com",
+        "subject": "Keep my body",
         "body_text": "Attached.",
         "attachments": [{"saved_to": str(cache / "603__shortlist.xlsx")}],
     }

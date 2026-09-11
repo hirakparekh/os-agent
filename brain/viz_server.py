@@ -89,7 +89,11 @@ def _person(conn: Any, p: dict[str, Any]) -> dict[str, Any]:
         "flags": d.get("flags") or [],
         "needs_review": bool(p.get("needs_review")),
         "tasks": [
-            {"name": t["title"], "due": t["data"].get("due_date"), "priority": t["data"].get("priority")}
+            {
+                "name": t["title"],
+                "due": t["data"].get("due_date"),
+                "priority": t["data"].get("priority"),
+            }
             for t in tasks
         ],
     }
@@ -167,7 +171,8 @@ async def ingest_resume_upload(
 
 def _mail_children(conn: Any, parent_id: str) -> list[dict[str, Any]]:
     return [
-        n for n in store.neighbors(conn, parent_id, "contains")
+        n
+        for n in store.neighbors(conn, parent_id, "contains")
         if n["type"] in ("mail_category", "mail_topic", "mail_thread")
     ]
 

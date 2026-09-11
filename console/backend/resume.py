@@ -52,8 +52,7 @@ def get_resume(
     if not path.exists():
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
-            f"No résumé on file for {email!r}. "
-            f"Expected file: {path.name}",
+            f"No résumé on file for {email!r}. Expected file: {path.name}",
         )
     try:
         return json.loads(path.read_text(encoding="utf-8"))

@@ -21,16 +21,31 @@ PROFILE_ID = "profile:me"
 # Keys whose values name the person, and so are worth looking for inside an attachment.
 # Deliberately an explicit list rather than "any key containing name/id": "Company name" and
 # "Recruiter id" would otherwise make every shortlist look like it names you.
-IDENTITY_KEYS = frozenset({
-    "name", "full name", "my name", "student name",
-    "roll", "roll no", "roll number",
-    "register number", "registration", "registration no", "registration number",
-    "reg no", "reg number",
-    "neo id", "neoid",
-    "student id", "employee id", "id",
-    # Escape hatch for anything else you answer to; comma-separated.
-    "identifier", "identifiers",
-})
+IDENTITY_KEYS = frozenset(
+    {
+        "name",
+        "full name",
+        "my name",
+        "student name",
+        "roll",
+        "roll no",
+        "roll number",
+        "register number",
+        "registration",
+        "registration no",
+        "registration number",
+        "reg no",
+        "reg number",
+        "neo id",
+        "neoid",
+        "student id",
+        "employee id",
+        "id",
+        # Escape hatch for anything else you answer to; comma-separated.
+        "identifier",
+        "identifiers",
+    }
+)
 
 # Values this short are matched as whole words anyway, but a one- or two-character "identifier"
 # would still fire on far too much text to be useful.

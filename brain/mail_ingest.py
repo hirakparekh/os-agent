@@ -60,26 +60,109 @@ MARGIN_DELTA = 2.0
 # what lets this list be aggressive: "dream company" and "off-campus" survive as phrases while the
 # bare tokens they used to leak (`dream`, `company`, `off`, `on`) cannot vote. `on` in particular
 # matched virtually every English email and handed Placements a free point on every one.
-KEYWORD_STOPWORDS = frozenset({
-    "a", "an", "and", "all", "any", "are", "as", "at", "be", "by", "can", "do", "for",
-    "from", "has", "have", "if", "in", "into", "is", "it", "its", "new", "no", "not",
-    "of", "off", "on", "open", "or", "our", "so", "that", "the", "then", "there",
-    "these", "they", "this", "to", "up", "us", "via", "was", "we", "were", "what",
-    "when", "where", "which", "who", "why", "will", "with", "you", "your",
-    # generic-business poison that shows up in real keyword lists
-    "company", "dream", "college", "student", "students", "email", "mail", "link",
-    "form", "team", "update", "details", "information", "please", "kindly", "dear",
-    "regards", "register", "registration",
-})
+KEYWORD_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "all",
+        "any",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "can",
+        "do",
+        "for",
+        "from",
+        "has",
+        "have",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "new",
+        "no",
+        "not",
+        "of",
+        "off",
+        "on",
+        "open",
+        "or",
+        "our",
+        "so",
+        "that",
+        "the",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "to",
+        "up",
+        "us",
+        "via",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "will",
+        "with",
+        "you",
+        "your",
+        # generic-business poison that shows up in real keyword lists
+        "company",
+        "dream",
+        "college",
+        "student",
+        "students",
+        "email",
+        "mail",
+        "link",
+        "form",
+        "team",
+        "update",
+        "details",
+        "information",
+        "please",
+        "kindly",
+        "dear",
+        "regards",
+        "register",
+        "registration",
+    }
+)
 
 # Terms that describe a *recruitment process*. Deliberately excludes bare "placement": the
 # "Training and Placement Cell" is the organiser of nearly every college email — including the
 # yoga-competition one this guardrail exists to get right — so it must not license a brand term.
 PLACEMENT_CONTEXT: tuple[str, ...] = (
-    "drive", "recruit", "recruitment", "recruiter", "hiring", "interview",
-    "internship", "ctc", "lpa", "stipend", "offer letter", "shortlisted",
-    "eligibility", "job description", "on-campus", "off-campus",
-    "campus drive", "career fair",
+    "drive",
+    "recruit",
+    "recruitment",
+    "recruiter",
+    "hiring",
+    "interview",
+    "internship",
+    "ctc",
+    "lpa",
+    "stipend",
+    "offer letter",
+    "shortlisted",
+    "eligibility",
+    "job description",
+    "on-campus",
+    "off-campus",
+    "campus drive",
+    "career fair",
 )
 
 # Brand names that are also ubiquitous products ("Google Form", "Google Meet"). They score only
@@ -102,43 +185,139 @@ DEFAULT_CONFIG = {
     "seeded_categories": ["Lectures & Profs", "Placements", "General College"],
     "category_keywords": {
         "Lectures & Profs": [
-            "lecture", "lectures", "guest lecture", "professor", "faculty",
-            "assignment", "submission", "class", "classes", "syllabus", "course",
-            "curriculum", "lab", "seminar", "tutorial", "instructor", "grade",
-            "marks", "attendance",
+            "lecture",
+            "lectures",
+            "guest lecture",
+            "professor",
+            "faculty",
+            "assignment",
+            "submission",
+            "class",
+            "classes",
+            "syllabus",
+            "course",
+            "curriculum",
+            "lab",
+            "seminar",
+            "tutorial",
+            "instructor",
+            "grade",
+            "marks",
+            "attendance",
         ],
         # NOTE: "training" is deliberately absent — "Training and Placement Cell" is the
         # organiser line of nearly every college email, including non-placement ones.
         "Placements": [
-            "placement", "placements", "placement drive", "campus drive",
-            "off-campus", "on-campus", "pre-placement talk",
-            "internship", "intern", "recruiter", "recruitment", "hiring",
-            "job", "jobs", "career fair", "job description", "offer letter",
-            "ctc", "lpa", "stipend", "package", "dream company", "onboarding",
-            "interview", "hr round", "technical round", "aptitude test",
-            "online assessment", "shortlisted", "eligibility criteria", "resume",
-            "accenture", "honeywell", "epsilon", "tcs", "infosys", "wipro",
-            "cognizant", "capgemini", "deloitte", "hcl", "tech mahindra",
+            "placement",
+            "placements",
+            "placement drive",
+            "campus drive",
+            "off-campus",
+            "on-campus",
+            "pre-placement talk",
+            "internship",
+            "intern",
+            "recruiter",
+            "recruitment",
+            "hiring",
+            "job",
+            "jobs",
+            "career fair",
+            "job description",
+            "offer letter",
+            "ctc",
+            "lpa",
+            "stipend",
+            "package",
+            "dream company",
+            "onboarding",
+            "interview",
+            "hr round",
+            "technical round",
+            "aptitude test",
+            "online assessment",
+            "shortlisted",
+            "eligibility criteria",
+            "resume",
+            "accenture",
+            "honeywell",
+            "epsilon",
+            "tcs",
+            "infosys",
+            "wipro",
+            "cognizant",
+            "capgemini",
+            "deloitte",
+            "hcl",
+            "tech mahindra",
             # conditional — score only alongside a PLACEMENT_CONTEXT term
-            "google", "microsoft", "amazon",
+            "google",
+            "microsoft",
+            "amazon",
         ],
         "General College": [
             # athletics / wellness
-            "sport", "sports", "sports day", "sports meet", "tournament",
-            "championship", "match", "athletics", "athletic", "yoga", "wellness",
-            "fitness", "meditation", "zumba", "marathon", "gym",
+            "sport",
+            "sports",
+            "sports day",
+            "sports meet",
+            "tournament",
+            "championship",
+            "match",
+            "athletics",
+            "athletic",
+            "yoga",
+            "wellness",
+            "fitness",
+            "meditation",
+            "zumba",
+            "marathon",
+            "gym",
             # events / culture
-            "event", "events", "competition", "contest", "quiz", "debate",
-            "hackathon", "fest", "festival", "cultural", "celebration",
-            "celebrations", "annual day", "dance", "music", "drama",
-            "prize distribution", "trip", "excursion",
+            "event",
+            "events",
+            "competition",
+            "contest",
+            "quiz",
+            "debate",
+            "hackathon",
+            "fest",
+            "festival",
+            "cultural",
+            "celebration",
+            "celebrations",
+            "annual day",
+            "dance",
+            "music",
+            "drama",
+            "prize distribution",
+            "trip",
+            "excursion",
             # student life / bodies
-            "workshop", "club", "clubs", "society", "student council", "chapter",
-            "ncc", "nss", "blood donation", "volunteer", "volunteers",
-            "alumni meet", "farewell", "freshers", "orientation", "induction",
+            "workshop",
+            "club",
+            "clubs",
+            "society",
+            "student council",
+            "chapter",
+            "ncc",
+            "nss",
+            "blood donation",
+            "volunteer",
+            "volunteers",
+            "alumni meet",
+            "farewell",
+            "freshers",
+            "orientation",
+            "induction",
             "convocation",
             # admin notices
-            "exam", "exams", "schedule", "timetable", "holiday", "notice",
+            "exam",
+            "exams",
+            "schedule",
+            "timetable",
+            "holiday",
+            "notice",
         ],
     },
     # A negative phrase in the SUBJECT vetoes that category outright ("Yoga Competition" is
@@ -146,10 +325,23 @@ DEFAULT_CONFIG = {
     # genuine placement drive that mentions the NSS office in a footer isn't thrown out.
     "category_negative_keywords": {
         "Placements": [
-            "yoga", "meditation", "zumba", "sports day", "sports meet",
-            "annual day", "cultural fest", "farewell", "freshers",
-            "blood donation", "ncc", "nss", "convocation", "marathon",
-            "prize distribution", "republic day", "independence day",
+            "yoga",
+            "meditation",
+            "zumba",
+            "sports day",
+            "sports meet",
+            "annual day",
+            "cultural fest",
+            "farewell",
+            "freshers",
+            "blood donation",
+            "ncc",
+            "nss",
+            "convocation",
+            "marathon",
+            "prize distribution",
+            "republic day",
+            "independence day",
         ],
     },
     "conditional_keywords": {k: list(v) for k, v in DEFAULT_CONDITIONAL_KEYWORDS.items()},
@@ -278,9 +470,7 @@ def sender_precedent(conn: Any, sender: str) -> str | None:
         category = classification.get("category")
         if not category:
             continue
-        votes[category] += (
-            CORRECTION_WEIGHT if classification.get("corrected_by_user") else 1
-        )
+        votes[category] += CORRECTION_WEIGHT if classification.get("corrected_by_user") else 1
     return votes.most_common(1)[0][0] if votes else None
 
 
@@ -383,16 +573,10 @@ def classify_email(
 ) -> dict[str, Any]:
     """LLM call: which category + topic does this email belong to (existing or new)?"""
     cat_lines = (
-        "\n".join(
-            f"- {c['title']}: {c.get('summary', '')}" for c in categories
-        )
-        or "(none yet)"
+        "\n".join(f"- {c['title']}: {c.get('summary', '')}" for c in categories) or "(none yet)"
     )
     findings_text = (
-        "\n".join(
-            f"- {f['file']} ({f['kind']}): {f['finding']}"
-            for f in attachment_findings
-        )
+        "\n".join(f"- {f['file']} ({f['kind']}): {f['finding']}" for f in attachment_findings)
         or "(none)"
     )
     prompt = (
@@ -435,16 +619,11 @@ def merge_or_create_thread(
     call, since the model already has the full email in front of it — extract whether this
     email describes a concrete, dated event worth adding to the user's calendar."""
     thread_lines = (
-        "\n".join(
-            f"- id={t['id']}: {t.get('summary', '')}" for t in existing_threads
-        )
+        "\n".join(f"- id={t['id']}: {t.get('summary', '')}" for t in existing_threads)
         or "(none yet)"
     )
     findings_text = (
-        "\n".join(
-            f"- {f['file']} ({f['kind']}): {f['finding']}"
-            for f in attachment_findings
-        )
+        "\n".join(f"- {f['file']} ({f['kind']}): {f['finding']}" for f in attachment_findings)
         or "(none)"
     )
     prompt = (
@@ -665,6 +844,7 @@ def rescan_attachments(conn: Any, config: dict[str, Any]) -> list[dict[str, Any]
         paths = cached_attachments_for([str(u) for u in (data.get("source_uids") or [])])
         if not paths:
             continue
+
         # Compare the whole finding, not just the identifier hits: a file can go from
         # "attachment not parsed" to a fully transcribed menu without ever naming the user,
         # and that is exactly the change worth persisting.
@@ -831,8 +1011,7 @@ def ingest_email(
         t
         for t in store.all_of_type(conn, "mail_thread")
         if any(
-            n["id"] == topic_id
-            for n in store.neighbors(conn, t["id"], "contains", incoming=True)
+            n["id"] == topic_id for n in store.neighbors(conn, t["id"], "contains", incoming=True)
         )
     ]
     decision = merge_or_create_thread(email, findings, existing_threads)
@@ -843,11 +1022,7 @@ def ingest_email(
     if decision["action"] == "merge" and decision.get("merge_into_id") in valid_thread_ids:
         thread_id = decision["merge_into_id"]
         existing_thread = store.get(conn, thread_id)
-        prior_uids = (
-            existing_thread["data"].get("source_uids", [])
-            if existing_thread
-            else []
-        )
+        prior_uids = existing_thread["data"].get("source_uids", []) if existing_thread else []
         uids = sorted({*prior_uids, email["uid"]})
         title = existing_thread["title"] if existing_thread else email.get("subject", "")
         source = ",".join(f"mail:{u}" for u in uids)
@@ -953,7 +1128,10 @@ def fetch_unread_emails(
         cmd += ["--user-id", str(user_id)]
     proc = subprocess.run(
         cmd,
-        capture_output=True, text=True, encoding="utf-8", timeout=600,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=600,
     )
     if proc.returncode != 0:
         raise SystemExit(f"emailtool.py list failed: {proc.stderr.strip()}")
@@ -967,7 +1145,10 @@ def mark_email_read(uid: str, user_id: str | int | None = None) -> None:
         cmd += ["--user-id", str(user_id)]
     proc = subprocess.run(
         cmd,
-        capture_output=True, text=True, encoding="utf-8", timeout=60,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
     )
     if proc.returncode != 0:
         raise SystemExit(f"emailtool.py mark-read failed: {proc.stderr.strip()}")
@@ -1010,8 +1191,13 @@ def run_iter(
         except (Exception, SystemExit) as exc:  # one bad email must not stop the whole run
             result = {"uid": email.get("uid"), "error": str(exc)}
             results.append(result)
-            yield {"stage": "ingested", "done": index, "total": total, "subject": subject,
-                   "error": str(exc)}
+            yield {
+                "stage": "ingested",
+                "done": index,
+                "total": total,
+                "subject": subject,
+                "error": str(exc),
+            }
             continue
         results.append(result)
         yield {
@@ -1060,10 +1246,7 @@ def main() -> None:
             print(f"[error] uid {result['uid']}: {result['error']}")
         else:
             tid = result["thread_id"]
-            print(
-                f"[{result['action']}] {result['category']} / "
-                f"{result['topic']} -> {tid}"
-            )
+            print(f"[{result['action']}] {result['category']} / {result['topic']} -> {tid}")
 
 
 if __name__ == "__main__":

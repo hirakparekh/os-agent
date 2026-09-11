@@ -49,15 +49,23 @@ def _link(conn: Any, node: dict[str, Any], ref: TaskRef) -> None:
     data = {**node["data"], "clickup_id": ref.id, "clickup_url": ref.url}
     conn.execute(
         "UPDATE entities SET data = ?, updated_at = ? WHERE id = ?",
-        (json.dumps(data, ensure_ascii=False), datetime.now(timezone.utc).isoformat(timespec="seconds"), node["id"]),
+        (
+            json.dumps(data, ensure_ascii=False),
+            datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            node["id"],
+        ),
     )
     conn.commit()
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Push brain Tasks into ClickUp (dry-run unless --push).")
+    ap = argparse.ArgumentParser(
+        description="Push brain Tasks into ClickUp (dry-run unless --push)."
+    )
     ap.add_argument("--list-id", default=None, help="ClickUp list id (required with --push)")
-    ap.add_argument("--push", action="store_true", help="actually create the tasks (default: dry-run)")
+    ap.add_argument(
+        "--push", action="store_true", help="actually create the tasks (default: dry-run)"
+    )
     ap.add_argument("--force", action="store_true", help="include tasks already linked to ClickUp")
     args = ap.parse_args()
 
