@@ -19,6 +19,7 @@ import sqlite3
 import tempfile
 import uuid
 from collections.abc import Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -578,6 +579,36 @@ def action_items(conn: ConnDep) -> dict[str, Any]:
                 }
             )
     return {"items": items}
+
+
+@app.get("/api/analytics/category-volume")
+def analytics_category_volume(conn: ConnDep, bucket: str = "day") -> dict[str, Any]:
+    """Thread count per category per time bucket, using created_at — already timestamped on
+    every entity, so this is pure aggregation with no new data collection."""
+    if bucket not in ("day", "week"):
+        return JSONResponse(status_code=400, content={"error": "bucket must be 'day' or 'week'"})
+
+    counts: dict[tuple[str, str], int] = {}
+    for thread in store.all_of_type(conn, "mail_thread"):
+        category, _ = _thread_path(conn, thread["id"])
+        created_at = thread.get("created_at") or ""
+        try:
+            when = datetime.fromisoformat(created_at)
+        except ValueError:
+            continue
+        key_bucket = (
+            when.strftime("%Y-%m-%d")
+            if bucket == "day"
+            else f"{when.isocalendar().year}-W{when.isocalendar().week:02d}"
+        )
+        key = (key_bucket, category or "Uncategorized")
+        counts[key] = counts.get(key, 0) + 1
+
+    points = [
+        {"bucket": key_bucket, "category": category, "count": count}
+        for (key_bucket, category), count in sorted(counts.items())
+    ]
+    return {"bucket": bucket, "points": points}
 
 
 class MailReclassifyRequest(BaseModel):

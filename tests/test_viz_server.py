@@ -248,3 +248,68 @@ def test_reload_stream_requires_authentication():
     with TestClient(viz_server.app) as anonymous:
         res = anonymous.post("/api/mail/reload/stream", json={"since_minutes": 60})
         assert res.status_code == 401
+
+
+def test_needs_attention_lists_only_urgent_threads(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    store.upsert(
+        conn, "mail_thread",
+        {"source_id": "mail:thread:1", "title": "Urgent!", "body": "b",
+         "source_uids": ["1"], "urgent": True},
+        title="Urgent!", summary="s", source="mail",
+    )
+    store.add_edge(conn, topic, "mail:thread:1", "contains")
+    store.upsert(
+        conn, "mail_thread",
+        {"source_id": "mail:thread:2", "title": "Calm", "body": "b",
+         "source_uids": ["2"], "urgent": False},
+        title="Calm", summary="s", source="mail",
+    )
+    store.add_edge(conn, topic, "mail:thread:2", "contains")
+
+    res = client.get("/api/needs-attention")
+    assert res.status_code == 200
+    names = [t["name"] for t in res.json()["threads"]]
+    assert names == ["Urgent!"]
+
+
+def test_action_items_flattens_across_threads(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    store.upsert(
+        conn, "mail_thread",
+        {"source_id": "mail:thread:1", "title": "T1", "body": "b", "source_uids": ["1"],
+         "action_items": [{"text": "submit resume by Friday"}]},
+        title="T1", summary="s", source="mail",
+    )
+    store.add_edge(conn, topic, "mail:thread:1", "contains")
+
+    res = client.get("/api/action-items")
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert len(items) == 1
+    assert items[0]["text"] == "submit resume by Friday"
+    assert items[0]["thread_id"] == "mail:thread:1"
+
+
+def test_analytics_category_volume_buckets_by_day(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    store.upsert(
+        conn, "mail_thread",
+        {"source_id": "mail:thread:1", "title": "T1", "body": "b", "source_uids": ["1"]},
+        title="T1", summary="s", source="mail",
+    )
+    store.add_edge(conn, topic, "mail:thread:1", "contains")
+
+    res = client.get("/api/analytics/category-volume")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["bucket"] == "day"
+    assert len(body["points"]) == 1
+    point = body["points"][0]
+    assert point["category"] == "Placements"
+    assert point["count"] == 1
+
+
+def test_analytics_category_volume_rejects_an_invalid_bucket(client):
+    res = client.get("/api/analytics/category-volume?bucket=month")
+    assert res.status_code == 400

@@ -1,11 +1,12 @@
 import { LogOut, PanelLeftClose, PanelLeftOpen } from "lucide-react"
 import { useEffect, useState } from "react"
-import { LayoutDashboard, MessageSquare, User, Plug, CheckCircle2, XCircle } from "lucide-react"
+import { LayoutDashboard, MessageSquare, User, Plug, CheckCircle2, XCircle, BarChart3 } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 
 import { getHealth, getMe } from "@/api"
 import { clearToken, getToken, onAuthChange, setRole, setToken } from "@/auth"
 import { getMailStatus, getMailTree } from "@/lib/brainApi"
+import { Analytics } from "@/pages/Analytics"
 import { Applications } from "@/pages/Applications"
 import { Chat } from "@/pages/Chat"
 import { Home } from "@/pages/Home"
@@ -13,11 +14,12 @@ import { Login } from "@/pages/Login"
 import { Profile } from "@/pages/Profile"
 import { ThemeToggle } from "@/components/ThemeToggle"
 
-export type View = "chat" | "mail" | "profile" | "applications"
+export type View = "chat" | "mail" | "analytics" | "profile" | "applications"
 
 const NAV: { view: View; label: string; icon: typeof LayoutDashboard }[] = [
   { view: "chat", label: "Chat", icon: MessageSquare },
   { view: "mail", label: "Mail", icon: LayoutDashboard },
+  { view: "analytics", label: "Analytics", icon: BarChart3 },
   { view: "applications", label: "Integrations", icon: Plug },
   { view: "profile", label: "Profile", icon: User },
 ]
@@ -302,6 +304,7 @@ export default function App() {
                       }}
                     />
                   )}
+                  {view === "analytics" && <Analytics />}
                   {view === "applications" && <Applications onMailStatusChange={refresh} />}
                   {view === "profile" && <Profile />}
                 </motion.div>

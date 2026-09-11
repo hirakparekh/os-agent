@@ -354,3 +354,14 @@ export interface ActionItem {
 export function getActionItems(): Promise<{ items: ActionItem[] }> {
   return request<{ items: ActionItem[] }>("/api/action-items")
 }
+
+export interface CategoryVolumePoint {
+  bucket: string
+  category: string
+  count: number
+}
+
+/** Thread count per category per time bucket — already-timestamped data, pure aggregation. */
+export function getCategoryVolume(bucket: "day" | "week" = "day"): Promise<{ bucket: string; points: CategoryVolumePoint[] }> {
+  return request(`/api/analytics/category-volume?bucket=${bucket}`)
+}
