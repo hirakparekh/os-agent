@@ -28,7 +28,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from brain import ask, calendar_tool, ingest, mail_ask, mail_ingest, profile, slack_ingest, store
+from brain import (
+    ask,
+    automation,
+    calendar_tool,
+    ingest,
+    mail_ask,
+    mail_ingest,
+    profile,
+    slack_ingest,
+    store,
+)
 from brain.auth import CurrentUser
 from brain.emailtool import _load_oauth_credentials, _token_path, mailbox_status
 from brain.notify import notify
@@ -497,6 +507,33 @@ def put_slack_channel(body: SlackChannelUpdate, conn: ConnDep) -> dict[str, Any]
     """Which Slack channel /api/slack/reload pulls history from (a channel ID, e.g. C0123ABC —
     visible in a channel's "Copy link", not its display name)."""
     return mail_ingest.set_slack_channel(conn, body.channel_id.strip())
+
+
+class CreateRuleRequest(BaseModel):
+    text: str
+
+
+@app.get("/api/rules")
+def list_rules(conn: ConnDep) -> dict[str, Any]:
+    """Every automation rule this user has authored (see brain/automation.py)."""
+    return {"rules": automation.list_rules(conn)}
+
+
+@app.post("/api/rules")
+def create_rule(body: CreateRuleRequest, conn: ConnDep) -> dict[str, Any]:
+    """Parse a natural-language rule ("notify me on Slack when a Placements email arrives")
+    into a structured trigger, via one LLM call at authoring time only — evaluation against
+    future messages is pure code (see automation.evaluate_and_notify)."""
+    categories = [c["title"] for c in store.all_of_type(conn, "mail_category")]
+    try:
+        return automation.create_rule(conn, body.text.strip(), categories)
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={"error": f"Couldn't parse that rule: {exc}"})
+
+
+@app.delete("/api/rules/{rule_id}")
+def delete_rule(rule_id: str, conn: ConnDep) -> dict[str, bool]:
+    return {"deleted": automation.delete_rule(conn, rule_id)}
 
 
 def _thread_path(conn: Any, thread_id: str) -> tuple[str | None, str | None]:

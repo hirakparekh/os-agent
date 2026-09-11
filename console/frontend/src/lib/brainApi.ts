@@ -365,3 +365,29 @@ export interface CategoryVolumePoint {
 export function getCategoryVolume(bucket: "day" | "week" = "day"): Promise<{ bucket: string; points: CategoryVolumePoint[] }> {
   return request(`/api/analytics/category-volume?bucket=${bucket}`)
 }
+
+export interface AutomationRule {
+  id: string
+  text: string
+  trigger_category: string | null
+  trigger_urgent_only: boolean
+  enabled: boolean
+}
+
+export function getRules(): Promise<{ rules: AutomationRule[] }> {
+  return request<{ rules: AutomationRule[] }>("/api/rules")
+}
+
+/** Parses `text` into a structured trigger via one LLM call, then persists it. */
+export function createRule(text: string): Promise<AutomationRule> {
+  return request<AutomationRule>("/api/rules", {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  })
+}
+
+export function deleteRule(ruleId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/api/rules/${encodeURIComponent(ruleId)}`, {
+    method: "DELETE",
+  })
+}

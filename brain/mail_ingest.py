@@ -28,7 +28,7 @@ from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
-from brain import bm25, calendar_tool, profile, store
+from brain import automation, bm25, calendar_tool, profile, store
 from brain.emailtool import ATTACHMENT_CACHE
 from brain.mail_attachments import process_attachment
 from brain.openrouter import call_openrouter
@@ -1158,6 +1158,15 @@ def _ingest_message(
     )
     reparent_thread(conn, thread_id, topic_id)
     store.add_edge(conn, topic_id, thread_id, "contains")
+
+    try:
+        # Best-effort: a flaky Slack post must not fail the whole ingest, same rationale as
+        # the calendar-event creation above.
+        automation.evaluate_and_notify(
+            conn, category=cat_title, urgent=urgent, title=title, channel=channel
+        )
+    except Exception:
+        pass
 
     return {
         "uid": message["uid"],

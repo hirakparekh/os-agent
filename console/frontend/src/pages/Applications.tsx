@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 
 import { type Application, AVAILABLE_APPS, CORE_APPS, GMAIL_APP, GOOGLE_CALENDAR_APP, connectApp, disconnectApp, getHealth } from "@/api"
+import { AutomationRules } from "@/components/AutomationRules"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -382,6 +383,8 @@ export function Applications({ onMailStatusChange }: { onMailStatusChange?: () =
           ))}
         </div>
       </section>
+
+      <AutomationRules />
     </div>
   )
 }
