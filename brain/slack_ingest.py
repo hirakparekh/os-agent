@@ -161,7 +161,10 @@ def run_iter(
     for index, raw in enumerate(raw_messages, start=1):
         message = to_mail_shaped_message(raw, channel_name)
         yield {
-            "stage": "ingesting", "done": index - 1, "total": total, "subject": message["subject"],
+            "stage": "ingesting",
+            "done": index - 1,
+            "total": total,
+            "subject": message["subject"],
         }
         try:
             result = mail_ingest._ingest_message(
@@ -170,8 +173,13 @@ def run_iter(
         except (Exception, SystemExit) as exc:  # one bad message must not stop the whole sync
             result = {"uid": message["uid"], "error": str(exc)}
             results.append(result)
-            yield {"stage": "ingested", "done": index, "total": total,
-                   "subject": message["subject"], "error": str(exc)}
+            yield {
+                "stage": "ingested",
+                "done": index,
+                "total": total,
+                "subject": message["subject"],
+                "error": str(exc),
+            }
             continue
         latest_ts = raw["ts"]
         results.append(result)

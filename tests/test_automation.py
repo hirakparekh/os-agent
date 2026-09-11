@@ -13,7 +13,8 @@ def _conn(tmp_path):
 def test_create_rule_parses_text_via_one_llm_call_and_persists(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     monkeypatch.setattr(
-        automation, "call_openrouter",
+        automation,
+        "call_openrouter",
         lambda prompt: '{"trigger_category": "Placements", "trigger_urgent_only": false}',
     )
 
@@ -30,7 +31,8 @@ def test_create_rule_parses_text_via_one_llm_call_and_persists(tmp_path, monkeyp
 def test_create_rule_tolerates_fenced_json(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     monkeypatch.setattr(
-        automation, "call_openrouter",
+        automation,
+        "call_openrouter",
         lambda prompt: '```json\n{"trigger_category": "", "trigger_urgent_only": true}\n```',
     )
 
@@ -42,7 +44,8 @@ def test_create_rule_tolerates_fenced_json(tmp_path, monkeypatch):
 def test_delete_rule_removes_it(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     monkeypatch.setattr(
-        automation, "call_openrouter",
+        automation,
+        "call_openrouter",
         lambda prompt: '{"trigger_category": "", "trigger_urgent_only": false}',
     )
     rule = automation.create_rule(conn, "anything", [])
@@ -54,7 +57,8 @@ def test_evaluate_and_notify_fires_only_matching_enabled_rules(tmp_path, monkeyp
     conn = _conn(tmp_path)
     posted = []
     monkeypatch.setattr(
-        automation, "SlackClient",
+        automation,
+        "SlackClient",
         lambda: type("F", (), {"post": lambda self, text: posted.append(text)})(),
     )
 
@@ -86,21 +90,29 @@ def test_evaluate_and_notify_fires_only_matching_enabled_rules(tmp_path, monkeyp
 def test_evaluate_and_notify_skips_disabled_rules(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     monkeypatch.setattr(
-        automation, "call_openrouter",
+        automation,
+        "call_openrouter",
         lambda prompt: '{"trigger_category": "", "trigger_urgent_only": false}',
     )
     rule = automation.create_rule(conn, "anything", [])
     disabled_data = {
-        **store.get(conn, rule["id"])["data"], "enabled": False, "source_id": rule["id"],
+        **store.get(conn, rule["id"])["data"],
+        "enabled": False,
+        "source_id": rule["id"],
     }
     store.upsert(
-        conn, "automation_rule", disabled_data,
-        title="anything", summary="anything", source="user",
+        conn,
+        "automation_rule",
+        disabled_data,
+        title="anything",
+        summary="anything",
+        source="user",
     )
 
     posted = []
     monkeypatch.setattr(
-        automation, "SlackClient",
+        automation,
+        "SlackClient",
         lambda: type("F", (), {"post": lambda self, text: posted.append(text)})(),
     )
     fired = automation.evaluate_and_notify(

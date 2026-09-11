@@ -80,15 +80,23 @@ def test_run_iter_ingests_via_the_shared_pipeline_and_saves_last_ts(tmp_path, mo
         ],
     )
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
+        mail_ingest,
+        "classify_email",
         lambda message, findings, categories: {
-            "category": "Placements", "new_category": True, "topic": "T", "new_topic": True,
+            "category": "Placements",
+            "new_category": True,
+            "topic": "T",
+            "new_topic": True,
         },
     )
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda message, findings, existing: {
-            "action": "new", "merge_into_id": None, "summary": "s", "body": "b",
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "s",
+            "body": "b",
         },
     )
 
