@@ -348,11 +348,14 @@ class MailAskRequest(BaseModel):
 
 
 @app.post("/api/mail/ask")
-def mail_ask_endpoint(body: MailAskRequest, conn: ConnDep) -> Any:
-    """Natural-language question over the caller's own ingested mail tree -> plain-text answer."""
+def mail_ask_endpoint(body: MailAskRequest, conn: ConnDep, user: CurrentUser) -> Any:
+    """Natural-language question over the caller's own ingested mail tree -> plain-text answer.
+
+    `user` is passed on purely so the prompt can include this user's live calendar events —
+    the mail side rides `conn`, which is already per-user."""
     details = [d.model_dump() for d in body.profile_details]
     try:
-        return mail_ask.ask_mail(conn, body.question, details)
+        return mail_ask.ask_mail(conn, body.question, details, user_id=user)
     except SystemExit as exc:
         # call_openrouter raises SystemExit when every OPENROUTER_API_KEYS entry is
         # exhausted/rejected.

@@ -1,8 +1,8 @@
 """brain/mail_ask.py — answer natural-language questions over the ingested mail tree.
 
-Mirrors brain/ask.py's Navigate -> Think shape but for mail_category -> mail_topic ->
-mail_thread nodes, and rides brain.openrouter (not brain.engine) since that's the engine
-already proven for the mail pipeline (classification/summarization in mail_ingest.py).
+Walks mail_category -> mail_topic -> mail_thread, then hands the model a bounded slice of it.
+Rides brain.openrouter, the same engine the mail pipeline already uses for classification and
+summarization (mail_ingest.py). This is the single Q&A path the console's Chat tab calls.
 
 Retrieval is bounded, not "dump the mailbox": every thread gets one summary line in the
 prompt (cheap — titles/summaries are short even at hundreds of threads), but only the BM25
@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from brain import bm25, profile, store
+from brain import bm25, calendar_tool, profile, store
 from brain.openrouter import call_openrouter
 
 TOP_K = 8  # tunable: how many full thread bodies to include, see module docstring
@@ -35,7 +35,12 @@ about whether an attachment mentions the user, trust the attachment finding.
 
 A TODAY line gives the current real-world date. Use it to resolve relative time questions
 ("today", "this week", "how many days until the deadline", "is this overdue") — never guess
-today's date from anything else."""
+today's date from anything else.
+
+A CALENDAR EVENTS section, when present, lists the user's real upcoming Google Calendar
+events. It is the authoritative source for "what's on my calendar" / "what meetings do I have
+today" — prefer it over anything the mail implies about their schedule. It is separate from
+the mail tree, so don't describe those events as emails."""
 
 
 def _walk_tree(conn: Any) -> list[tuple[str, str, dict[str, Any]]]:
@@ -162,11 +167,34 @@ def _format_profile(profile_details: list[dict[str, str]]) -> str:
     return "\n".join(lines) if lines else "(none provided)"
 
 
+def _calendar_section(user_id: str | int | None) -> str:
+    """Live Google Calendar events for the prompt, or "" when the calendar isn't connected.
+
+    Calendar access is optional, so a disconnected user just gets the mail-only behaviour —
+    but when it IS connected this is what lets "what meetings do I have today" be answered
+    from the real calendar rather than inferred from mail.
+    """
+    if user_id is None:
+        return ""
+    try:
+        events = calendar_tool.list_upcoming_events(user_id)
+    except Exception:
+        return ""
+    if not events:
+        return ""
+    lines = [
+        f"  {e['start']} — {e['title']}" + (f" @ {e['location']}" if e.get("location") else "")
+        for e in events
+    ]
+    return "=== CALENDAR EVENTS (upcoming, real, live) ===\n" + "\n".join(lines) + "\n\n"
+
+
 def build_prompt(
     question: str,
     rows: list[tuple[str, str, dict[str, Any]]],
     top_threads: list[tuple[str, str, dict[str, Any]]],
     profile_details: list[dict[str, str]],
+    user_id: str | int | None = None,
 ) -> str:
     overview = _format_overview(rows)
     full = "\n\n".join(_format_full_thread(c, t, th) for c, t, th in top_threads) or (
@@ -179,6 +207,7 @@ def build_prompt(
     return (
         f"{SYSTEM}\n\n"
         f"=== TODAY ===\n{today}\n\n"
+        f"{_calendar_section(user_id)}"
         f"=== MAIL OVERVIEW (every thread, one line each) ===\n{overview}\n\n"
         f"=== RELEVANT THREADS IN FULL ===\n{full}\n\n"
         f"=== ABOUT THE PERSON ASKING (optional context) ===\n{profile_block}\n\n"
@@ -192,11 +221,14 @@ def ask_mail(
     profile_details: list[dict[str, str]] | None = None,
     *,
     top_k: int = TOP_K,
+    user_id: str | int | None = None,
 ) -> dict[str, str]:
     """Answer `question` over the mail knowledge tree. Returns {"answer": str}.
 
-    Empty tree short-circuits to a canned message without calling the LLM (mirrors
-    brain.ask.ask's empty-catalogue return).
+    `user_id` is only needed to pull this user's live calendar events into the prompt — the
+    mail side all rides `conn`, which is already per-user.
+
+    Empty tree short-circuits to a canned message without calling the LLM.
     """
     rows = _walk_tree(conn)
     if not rows:
@@ -211,6 +243,6 @@ def ask_mail(
     merged = list(profile_details or []) + [d for d in stored if d["key"].lower() not in seen]
 
     top_threads = _rank_threads(question, rows, top_k=top_k)
-    prompt = build_prompt(question, rows, top_threads, merged)
+    prompt = build_prompt(question, rows, top_threads, merged, user_id)
     reply = call_openrouter(prompt)
     return {"answer": reply.strip()}

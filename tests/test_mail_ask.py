@@ -156,3 +156,38 @@ def test_prompt_carries_attachments_to_the_model():
     prompt = mail_ask.build_prompt("is my name in any attachment?", rows, rows, [])
     assert "NAMES THE USER: 23BCE1234" in prompt
     assert "shortlist.xlsx" in prompt
+
+
+def test_prompt_includes_live_calendar_events_when_connected(monkeypatch):
+    """Regression guard: the calendar context used to live in the now-deleted brain/ask.py.
+    Chat runs through mail_ask, so "what meetings do I have today" only works if the live
+    calendar is injected here."""
+    monkeypatch.setattr(
+        mail_ask.calendar_tool, "list_upcoming_events",
+        lambda user_id, *a, **k: [
+            {"start": "2026-09-12T10:00:00", "title": "Ethos online test", "location": "SJT 717"},
+        ],
+    )
+    prompt = mail_ask.build_prompt("what meetings do I have?", [], [], [], user_id=1)
+
+    assert "=== CALENDAR EVENTS" in prompt
+    assert "Ethos online test" in prompt
+    assert "SJT 717" in prompt
+
+
+def test_prompt_omits_calendar_section_when_not_connected(monkeypatch):
+    def _boom(user_id, *a, **k):
+        raise RuntimeError("no calendar connected")
+
+    monkeypatch.setattr(mail_ask.calendar_tool, "list_upcoming_events", _boom)
+    prompt = mail_ask.build_prompt("anything?", [], [], [], user_id=1)
+    assert "=== CALENDAR EVENTS" not in prompt
+
+
+def test_prompt_omits_calendar_section_without_a_user(monkeypatch):
+    """No user_id (CLI/tests) must never trigger a calendar lookup at all."""
+    def _never(user_id, *a, **k):
+        raise AssertionError("must not look up a calendar without a user_id")
+
+    monkeypatch.setattr(mail_ask.calendar_tool, "list_upcoming_events", _never)
+    assert "=== CALENDAR EVENTS" not in mail_ask.build_prompt("anything?", [], [], [])
