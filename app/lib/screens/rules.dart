@@ -98,17 +98,44 @@ class _RulesScreenState extends State<RulesScreen> {
 Future<void> _addRule(BuildContext context) async {
   final state = context.read<AppState>();
   final messenger = ScaffoldMessenger.of(context);
-  final controller = TextEditingController();
 
   final text = await showDialog<String>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
+    builder: (_) => const _NewRuleDialog(),
+  );
+
+  if (text == null || text.isEmpty) return;
+  final error = await state.addRule(text);
+  if (error != null) messenger.showSnackBar(SnackBar(content: Text(error)));
+}
+
+/// Owns its controller so it is disposed with the route, after the dialog's exit animation
+/// has stopped building the TextField (same bug as the login screen's server sheet).
+class _NewRuleDialog extends StatefulWidget {
+  const _NewRuleDialog();
+
+  @override
+  State<_NewRuleDialog> createState() => _NewRuleDialogState();
+}
+
+class _NewRuleDialogState extends State<_NewRuleDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
       title: const Text('New rule'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           TextField(
-            controller: controller,
+            controller: _controller,
             autofocus: true,
             minLines: 2,
             maxLines: 4,
@@ -128,19 +155,14 @@ Future<void> _addRule(BuildContext context) async {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(dialogContext).pop(),
+          onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () => Navigator.of(dialogContext).pop(controller.text.trim()),
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
           child: const Text('Create'),
         ),
       ],
-    ),
-  );
-  controller.dispose();
-
-  if (text == null || text.isEmpty) return;
-  final error = await state.addRule(text);
-  if (error != null) messenger.showSnackBar(SnackBar(content: Text(error)));
+    );
+  }
 }
