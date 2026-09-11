@@ -64,7 +64,9 @@ def cmd_person(conn: Any, name: str) -> str:
     if match.get("summary"):
         lines.append(match["summary"])
     if d.get("seniority") or d.get("total_years_experience"):
-        lines.append(f"seniority: {d.get('seniority') or '-'} | exp: {d.get('total_years_experience') or '-'} yrs")
+        lines.append(
+            f"seniority: {d.get('seniority') or '-'} | exp: {d.get('total_years_experience') or '-'} yrs"
+        )
     if d.get("skills"):
         lines.append("skills: " + ", ".join(d["skills"][:12]))
     if _radar_top(d, 6):
@@ -92,8 +94,11 @@ def cmd_who(conn: Any, term: str) -> str:
         haystack = " ".join(
             normalize(str(x))
             for x in [
-                p.get("title"), d.get("summary"), d.get("headline"),
-                " ".join(d.get("skills") or []), " ".join(d.get("strengths") or []),
+                p.get("title"),
+                d.get("summary"),
+                d.get("headline"),
+                " ".join(d.get("skills") or []),
+                " ".join(d.get("strengths") or []),
                 " ".join(d.get("domains") or []),
             ]
         )

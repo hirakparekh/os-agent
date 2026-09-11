@@ -36,8 +36,12 @@ OCR_TIMEOUT_S = 90
 VISION_MODEL_ENV = "OPENROUTER_VISION_MODEL"
 DEFAULT_VISION_MODEL = "meta-llama/llama-3.2-11b-vision-instruct:free"
 JD_KEYWORDS = (
-    "responsibilities", "requirements", "qualifications",
-    "job description", "role overview", "skills required",
+    "responsibilities",
+    "requirements",
+    "qualifications",
+    "job description",
+    "role overview",
+    "skills required",
 )
 
 
@@ -121,8 +125,7 @@ def scan_excel(path: Path, identifiers: list[str]) -> dict[str, Any]:
             continue
         padded = list(headers) + [""] * max(0, len(cells) - len(headers))
         labelled = {
-            h or f"col{i + 1}": c
-            for i, (h, c) in enumerate(zip(padded, cells, strict=False))
+            h or f"col{i + 1}": c for i, (h, c) in enumerate(zip(padded, cells, strict=False))
         }
         matched.append({"matched": hits, "values": labelled})
         if len(matched) >= MAX_MATCHED_ROWS:
@@ -231,7 +234,7 @@ def looks_like_job_description(text: str) -> bool:
 def match_resume_to_jd(jd_text: str, resume_profile: dict) -> str:
     """One small LLM call: does this student's résumé match this JD? Short match/gap note."""
     skills = ", ".join(resume_profile.get("skills", []))
-    summary = resume_profile.get('summary') or resume_profile.get('headline') or ''
+    summary = resume_profile.get("summary") or resume_profile.get("headline") or ""
     prompt = (
         "You are screening ONE candidate against ONE job description. Reply with 2-3 short "
         "sentences: how well they match, and the clearest gap if any. No preamble, no markdown.\n\n"

@@ -21,7 +21,8 @@ def _make_excel(tmp_path, headers, rows):
 
 def test_extract_excel_match_finds_row(tmp_path):
     path = _make_excel(
-        tmp_path, ["Name", "Student ID", "Status"],
+        tmp_path,
+        ["Name", "Student ID", "Status"],
         [["Asha", "S123", "Selected"], ["Ravi", "S456", "Not Selected"]],
     )
     result = ma.extract_excel_match(path, "S456")
@@ -100,7 +101,8 @@ def test_process_attachment_unsupported_type(tmp_path):
 
 def test_process_attachment_pdf_non_jd(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        ma, "extract_pdf_text",
+        ma,
+        "extract_pdf_text",
         lambda path, max_chars=ma.PDF_CHAR_CAP: "Hey, see you soon.",
     )
     path = tmp_path / "note.pdf"
@@ -112,7 +114,8 @@ def test_process_attachment_pdf_non_jd(tmp_path, monkeypatch):
 def test_process_attachment_pdf_jd_with_resume(tmp_path, monkeypatch):
     jd_text = "Responsibilities: code. Requirements: Python. Qualifications: BS."
     monkeypatch.setattr(
-        ma, "extract_pdf_text",
+        ma,
+        "extract_pdf_text",
         lambda path, max_chars=ma.PDF_CHAR_CAP: jd_text,
     )
     monkeypatch.setattr(ma, "match_resume_to_jd", lambda jd, profile: "matches well")
@@ -120,7 +123,9 @@ def test_process_attachment_pdf_jd_with_resume(tmp_path, monkeypatch):
     path.write_bytes(b"%PDF-1.4")
     result = ma.process_attachment(path, {"resume_profile": {"skills": ["Python"]}})
     assert result == {
-        "file": "jd.pdf", "kind": "pdf_jd", "finding": "matches well",
+        "file": "jd.pdf",
+        "kind": "pdf_jd",
+        "finding": "matches well",
         # A JD's raw text is replaced by the match note, so identifier hits ride separately.
         "mentions_you": [],
     }

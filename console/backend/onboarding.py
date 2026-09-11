@@ -28,6 +28,7 @@ from console.backend.rbac import ONBOARD_ROLES, is_privileged, require_role
 
 class OrgRole(StrEnum):
     """The person's organisational role (display label, not the access-control role)."""
+
     ADMIN = "admin"
     TEAM_LEAD = "team_lead"
     DEVELOPER = "developer"
@@ -68,6 +69,7 @@ class OnboardedPerson(BaseModel):
 
 class RosterEntry(BaseModel):
     """A roster row — sensitive fields are None when the viewer is not privileged."""
+
     name: str
     email: str | None = None
     role: OrgRole

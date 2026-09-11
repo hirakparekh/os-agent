@@ -39,9 +39,16 @@ def ingest_resume(conn: Any, path: Path, role: str = "", kind: str = "person") -
     profile = parse_resume(Path(path), role)
     name = profile.get("name")
     # email goes in the resolver's disambiguator slot: same-name people with different emails stay distinct.
-    candidate = {**profile, "assignee": profile.get("email") or "", "kind": kind, "target_role": role or None}
+    candidate = {
+        **profile,
+        "assignee": profile.get("email") or "",
+        "kind": kind,
+        "target_role": role or None,
+    }
     summary = profile.get("summary") or profile.get("headline")
-    res, pid = store.upsert(conn, "person", candidate, title=name, summary=summary, source=str(path))
+    res, pid = store.upsert(
+        conn, "person", candidate, title=name, summary=summary, source=str(path)
+    )
     return {"action": res.action, "id": pid, "name": name, "reason": res.reason}
 
 
@@ -79,7 +86,12 @@ def ingest_meeting(
         "participants": result.get("participants", []),
     }
     m_res, mid = store.upsert(
-        conn, "meeting", meeting_cand, title=m_title, summary=result.get("summary"), source=str(path)
+        conn,
+        "meeting",
+        meeting_cand,
+        title=m_title,
+        summary=result.get("summary"),
+        source=str(path),
     )
 
     tasks_out = []
@@ -87,20 +99,26 @@ def ingest_meeting(
         assignee = task.get("assignee") or ""
         candidate = {**task, "assignee": assignee}
         t_res, tid = store.upsert(
-            conn, "task", candidate, title=task.get("name"), summary=task.get("description"),
+            conn,
+            "task",
+            candidate,
+            title=task.get("name"),
+            summary=task.get("description"),
             source=str(path),
         )
         store.add_edge(conn, tid, mid, "from_meeting")
         person = _match_person(conn, assignee)
         if person:
             store.add_edge(conn, tid, person["id"], "assigned_to")
-        tasks_out.append({
-            "action": t_res.action,
-            "id": tid,
-            "name": task.get("name"),
-            "assignee": assignee or None,
-            "linked_person": bool(person),
-        })
+        tasks_out.append(
+            {
+                "action": t_res.action,
+                "id": tid,
+                "name": task.get("name"),
+                "assignee": assignee or None,
+                "linked_person": bool(person),
+            }
+        )
 
     return {"meeting": {"action": m_res.action, "id": mid, "title": m_title}, "tasks": tasks_out}
 
@@ -116,7 +134,9 @@ def _clickup_task_to_candidate(task: dict[str, Any]) -> dict[str, Any]:
     due_ms = task.get("due_date")
     if due_ms:
         try:
-            due_date = datetime.fromtimestamp(int(due_ms) / 1000, tz=timezone.utc).date().isoformat()
+            due_date = (
+                datetime.fromtimestamp(int(due_ms) / 1000, tz=timezone.utc).date().isoformat()
+            )
         except (ValueError, TypeError):
             due_date = None
     priority = None
@@ -144,7 +164,11 @@ def ingest_clickup(conn: Any, list_id: str, client: Any = None) -> list[dict[str
     for task in client.list_tasks(list_id):
         cand = _clickup_task_to_candidate(task)
         res, tid = store.upsert(
-            conn, "task", cand, title=cand["name"], summary=cand["description"],
+            conn,
+            "task",
+            cand,
+            title=cand["name"],
+            summary=cand["description"],
             source=f"clickup:{cand['clickup_id']}",
         )
         out.append({"action": res.action, "id": tid, "name": cand["name"]})
@@ -159,8 +183,12 @@ def main() -> None:
 
     pr = sub.add_parser("resume", help="ingest a résumé file as a Person node")
     pr.add_argument("file", type=Path)
-    pr.add_argument("--role", default="", help="target role: weights scoring + stored for HR fit ranking")
-    pr.add_argument("--candidate", action="store_true", help="mark this person as a hiring candidate")
+    pr.add_argument(
+        "--role", default="", help="target role: weights scoring + stored for HR fit ranking"
+    )
+    pr.add_argument(
+        "--candidate", action="store_true", help="mark this person as a hiring candidate"
+    )
 
     pm = sub.add_parser("meeting", help="ingest a meeting transcript as Meeting + Task nodes")
     pm.add_argument("file", type=Path)
@@ -178,7 +206,9 @@ def main() -> None:
         if not list_id:
             raise SystemExit("Give --list-id or set CLICKUP_LIST_ID (with CLICKUP_TOKEN).")
         if not os.environ.get("CLICKUP_TOKEN"):
-            raise SystemExit("Set CLICKUP_TOKEN in .env to pull from ClickUp (see INTEGRATIONS.md).")
+            raise SystemExit(
+                "Set CLICKUP_TOKEN in .env to pull from ClickUp (see INTEGRATIONS.md)."
+            )
         rows = ingest_clickup(conn, list_id)
         print(f"Pulled {len(rows)} task(s) from ClickUp list {list_id}:")
         for r in rows:

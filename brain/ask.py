@@ -60,7 +60,10 @@ def _person_line(p: dict[str, Any]) -> str:
     scored = [(k, s) for k, s in scored if isinstance(s, (int, float))]
     if scored:
         fit = round(sum(s for _, s in scored) / len(scored))
-        top = ", ".join(f"{k.replace('_', ' ')} {s}" for k, s in sorted(scored, key=lambda kv: kv[1], reverse=True)[:3])
+        top = ", ".join(
+            f"{k.replace('_', ' ')} {s}"
+            for k, s in sorted(scored, key=lambda kv: kv[1], reverse=True)[:3]
+        )
         bits.append(f"fit {fit}; strengths: {top}")
     if d.get("skills"):
         bits.append("skills: " + ", ".join(d["skills"][:8]))
@@ -165,7 +168,11 @@ def ask(conn: Any, question: str, user_id: str | int | None = None) -> dict[str,
     cat, index = catalogue(conn)
     calendar_section = _calendar_section(user_id)
     if not index and not calendar_section:
-        return {"answer": "The brain is empty — ingest a résumé or a meeting first.", "path": [], "reasoning": ""}
+        return {
+            "answer": "The brain is empty — ingest a résumé or a meeting first.",
+            "path": [],
+            "reasoning": "",
+        }
 
     today = datetime.now().strftime("%A, %Y-%m-%d")
     prompt = (

@@ -185,7 +185,9 @@ def _ocr_image(path: Path) -> str:
         timeout=300,
     )
     if proc.returncode != 0:
-        raise SystemExit(f"claude image read failed (exit {proc.returncode}):\n{proc.stderr.strip()}")
+        raise SystemExit(
+            f"claude image read failed (exit {proc.returncode}):\n{proc.stderr.strip()}"
+        )
     return proc.stdout.strip()
 
 
@@ -214,7 +216,9 @@ def parse_resume(path: Path, role: str = "") -> dict:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Parse a résumé file into structured JSON via claude -p.")
+    ap = argparse.ArgumentParser(
+        description="Parse a résumé file into structured JSON via claude -p."
+    )
     ap.add_argument("file", type=Path, help="résumé file (.pdf .docx .txt .md or an image)")
     ap.add_argument("--role", default="", help="optional target role to weight scoring")
     ap.add_argument("--out", type=Path, help="write JSON here instead of stdout")

@@ -121,10 +121,14 @@ def extract_meeting(transcript: str, summary: str = "", meeting_date: str = "") 
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Extract a clean summary + task list from a meeting via claude -p.")
+    ap = argparse.ArgumentParser(
+        description="Extract a clean summary + task list from a meeting via claude -p."
+    )
     ap.add_argument("transcript", type=Path, help="raw transcript file (.txt/.md)")
     ap.add_argument("--summary", type=Path, help="optional meeting-summary file")
-    ap.add_argument("--date", default="", help="meeting date (YYYY-MM-DD) to resolve relative due dates")
+    ap.add_argument(
+        "--date", default="", help="meeting date (YYYY-MM-DD) to resolve relative due dates"
+    )
     ap.add_argument("--out", type=Path, help="write JSON here instead of stdout")
     args = ap.parse_args()
 
