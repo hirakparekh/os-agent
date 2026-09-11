@@ -12,8 +12,14 @@ TODAY = date(2026, 9, 11)
 
 
 def _event(start, kind="event", uid="1", title="Thing"):
-    return {"title": title, "start": start, "end": None, "kind": kind, "location": None,
-            "source_uid": uid}
+    return {
+        "title": title,
+        "start": start,
+        "end": None,
+        "kind": kind,
+        "location": None,
+        "source_uid": uid,
+    }
 
 
 # --- pure rules ------------------------------------------------------------------------------
@@ -55,8 +61,9 @@ def test_merge_events_dedupes_per_email_and_sorts():
 def test_thread_timeline_falls_back_for_threads_that_predate_dates():
     legacy = {
         "created_at": "2026-09-01T08:00:00+00:00",
-        "data": {"calendar_events": [{"title": "Interview", "start": "2026-09-15",
-                                      "source_uid": "9"}]},
+        "data": {
+            "calendar_events": [{"title": "Interview", "start": "2026-09-15", "source_uid": "9"}]
+        },
     }
     timeline = mail_timeline.thread_timeline(legacy)
     assert timeline["last_received"] == "2026-09-01T08:00:00+00:00"
@@ -65,8 +72,11 @@ def test_thread_timeline_falls_back_for_threads_that_predate_dates():
 
 
 def test_thread_timeline_orders_received_dates_across_offsets():
-    thread = {"data": {"received_at": {"1": "2026-09-10T23:00:00+05:30",
-                                       "2": "2026-09-10T18:00:00+00:00"}}}
+    thread = {
+        "data": {
+            "received_at": {"1": "2026-09-10T23:00:00+05:30", "2": "2026-09-10T18:00:00+00:00"}
+        }
+    }
     timeline = mail_timeline.thread_timeline(thread)
     assert timeline["first_received"] == "2026-09-10T23:00:00+05:30"  # 17:30 UTC
     assert timeline["last_received"] == "2026-09-10T18:00:00+00:00"
@@ -96,15 +106,26 @@ def test_thread_status(events, status, days):
 
 
 def _email(uid, date_header, subject="Accenture OA"):
-    return {"uid": uid, "from": "hr@acme.com", "to": "me@x.com", "subject": subject,
-            "body_text": "...", "attachments": [], "date": date_header}
+    return {
+        "uid": uid,
+        "from": "hr@acme.com",
+        "to": "me@x.com",
+        "subject": subject,
+        "body_text": "...",
+        "attachments": [],
+        "date": date_header,
+    }
 
 
 def _fake_llm(monkeypatch, decision):
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
+        mail_ingest,
+        "classify_email",
         lambda email, findings, categories: {
-            "category": "Placements", "new_category": True, "topic": "Acme", "new_topic": True,
+            "category": "Placements",
+            "new_category": True,
+            "topic": "Acme",
+            "new_topic": True,
         },
     )
     monkeypatch.setattr(
@@ -114,10 +135,16 @@ def _fake_llm(monkeypatch, decision):
 
 def test_ingest_stores_received_date_and_event(tmp_path, monkeypatch):
     conn = store.connect(tmp_path / "t.db")
-    _fake_llm(monkeypatch, {
-        "action": "new", "merge_into_id": None, "summary": "s", "body": "b",
-        "event": {"has_event": True, "kind": "deadline", "title": "OA", "start": "2026-09-14"},
-    })
+    _fake_llm(
+        monkeypatch,
+        {
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "s",
+            "body": "b",
+            "event": {"has_event": True, "kind": "deadline", "title": "OA", "start": "2026-09-14"},
+        },
+    )
     result = mail_ingest.ingest_email(conn, _email("1", "Thu, 10 Sep 2026 09:00:00 +0530"), {})
 
     data = store.get(conn, result["thread_id"])["data"]
@@ -127,15 +154,32 @@ def test_ingest_stores_received_date_and_event(tmp_path, monkeypatch):
 
 def test_ingest_merge_accumulates_dates(tmp_path, monkeypatch):
     conn = store.connect(tmp_path / "t.db")
-    _fake_llm(monkeypatch, {
-        "action": "new", "merge_into_id": None, "summary": "s", "body": "b",
-        "event": {"has_event": True, "kind": "event", "title": "Interview", "start": "2026-09-20"},
-    })
+    _fake_llm(
+        monkeypatch,
+        {
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "s",
+            "body": "b",
+            "event": {
+                "has_event": True,
+                "kind": "event",
+                "title": "Interview",
+                "start": "2026-09-20",
+            },
+        },
+    )
     first = mail_ingest.ingest_email(conn, _email("1", "Thu, 10 Sep 2026 09:00:00 +0000"), {})
-    _fake_llm(monkeypatch, {
-        "action": "merge", "merge_into_id": first["thread_id"], "summary": "s", "body": "b",
-        "event": {"has_event": True, "kind": "deadline", "title": "OA", "start": "2026-09-14"},
-    })
+    _fake_llm(
+        monkeypatch,
+        {
+            "action": "merge",
+            "merge_into_id": first["thread_id"],
+            "summary": "s",
+            "body": "b",
+            "event": {"has_event": True, "kind": "deadline", "title": "OA", "start": "2026-09-14"},
+        },
+    )
     mail_ingest.ingest_email(conn, _email("2", "Fri, 11 Sep 2026 09:00:00 +0000"), {})
 
     timeline = mail_timeline.thread_timeline(store.get(conn, first["thread_id"]))
@@ -147,15 +191,21 @@ def test_ingest_merge_accumulates_dates(tmp_path, monkeypatch):
 def test_ingest_merge_into_legacy_thread_keeps_an_estimated_first_date(tmp_path, monkeypatch):
     conn = store.connect(tmp_path / "t.db")
     topic = mail_ingest.ensure_topic(conn, "Placements", "Acme")
-    store.upsert(conn, "mail_thread",
-                 {"source_id": "mail:thread:old", "title": "Old", "body": "b",
-                  "source_uids": ["old"]},
-                 title="Old", summary="s", source="mail:old")
+    store.upsert(
+        conn,
+        "mail_thread",
+        {"source_id": "mail:thread:old", "title": "Old", "body": "b", "source_uids": ["old"]},
+        title="Old",
+        summary="s",
+        source="mail:old",
+    )
     store.add_edge(conn, topic, "mail:thread:old", "contains")
     created = store.get(conn, "mail:thread:old")["created_at"]
 
-    _fake_llm(monkeypatch, {"action": "merge", "merge_into_id": "mail:thread:old",
-                            "summary": "s", "body": "b"})
+    _fake_llm(
+        monkeypatch,
+        {"action": "merge", "merge_into_id": "mail:thread:old", "summary": "s", "body": "b"},
+    )
     mail_ingest.ingest_email(conn, _email("2", "Fri, 11 Sep 2026 09:00:00 +0000"), {})
 
     received = store.get(conn, "mail:thread:old")["data"]["received_at"]
@@ -174,16 +224,32 @@ def conn(tmp_path):
 
 def _seed_thread(conn, uid, title, events, received):
     topic = mail_ingest.ensure_topic(conn, "Placements", "Acme")
-    store.upsert(conn, "mail_thread",
-                 {"source_id": f"mail:thread:{uid}", "title": title, "body": "b",
-                  "source_uids": [uid], "received_at": {uid: received}, "events": events},
-                 title=title, summary="s", source=f"mail:{uid}")
+    store.upsert(
+        conn,
+        "mail_thread",
+        {
+            "source_id": f"mail:thread:{uid}",
+            "title": title,
+            "body": "b",
+            "source_uids": [uid],
+            "received_at": {uid: received},
+            "events": events,
+        },
+        title=title,
+        summary="s",
+        source=f"mail:{uid}",
+    )
     store.add_edge(conn, topic, f"mail:thread:{uid}", "contains")
 
 
 def test_mail_tree_threads_carry_category_topic_and_dates(conn):
-    _seed_thread(conn, "1", "Accenture OA", [_event("2026-09-14", kind="deadline")],
-                 "2026-09-10T09:00:00+00:00")
+    _seed_thread(
+        conn,
+        "1",
+        "Accenture OA",
+        [_event("2026-09-14", kind="deadline")],
+        "2026-09-10T09:00:00+00:00",
+    )
     viz_server.app.dependency_overrides[viz_server.get_user_conn] = lambda: conn
     viz_server.app.dependency_overrides[brain_auth.get_current_user_id] = lambda: 1
     try:
@@ -201,12 +267,23 @@ def test_mail_tree_threads_carry_category_topic_and_dates(conn):
 
 
 def test_dated_items_list_upcoming_and_overdue_but_not_old_events(conn):
-    _seed_thread(conn, "1", "Accenture OA", [_event("2026-09-14", kind="deadline", title="OA")],
-                 "2026-09-10T09:00:00+00:00")
-    _seed_thread(conn, "2", "Scholarship", [_event("2026-09-09", kind="deadline", title="Form")],
-                 "2026-09-01T09:00:00+00:00")
-    _seed_thread(conn, "3", "Fest", [_event("2026-06-01", title="Fest day")],
-                 "2026-05-20T09:00:00+00:00")
+    _seed_thread(
+        conn,
+        "1",
+        "Accenture OA",
+        [_event("2026-09-14", kind="deadline", title="OA")],
+        "2026-09-10T09:00:00+00:00",
+    )
+    _seed_thread(
+        conn,
+        "2",
+        "Scholarship",
+        [_event("2026-09-09", kind="deadline", title="Form")],
+        "2026-09-01T09:00:00+00:00",
+    )
+    _seed_thread(
+        conn, "3", "Fest", [_event("2026-06-01", title="Fest day")], "2026-05-20T09:00:00+00:00"
+    )
 
     text = mail_ask._format_dated_items(mail_ask._walk_tree(conn), TODAY)
     lines = text.splitlines()

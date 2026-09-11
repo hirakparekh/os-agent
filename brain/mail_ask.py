@@ -166,7 +166,7 @@ def _format_dated_items(rows: list[tuple[str, str, dict[str, Any]]], today: date
                 (
                     days,
                     f"  {status['status'].upper()} {kind} {event['start'][:16]} ({when}): "
-                    f"{event['title']} — from \"{thread['title']}\" [{cat} > {topic}]",
+                    f'{event["title"]} — from "{thread["title"]}" [{cat} > {topic}]',
                 )
             )
     items.sort(key=lambda item: item[0])

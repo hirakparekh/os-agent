@@ -639,8 +639,8 @@ def merge_or_create_thread(
         "Separately, decide whether this email describes something happening at a specific, "
         "concrete date/time — an interview, exam, meeting, deadline, competition, festival, "
         "or similar — as opposed to a vague or ongoing topic with no fixed occurrence. "
-        "Its kind is \"deadline\" when it's something the reader must do or submit by that date "
-        "(a form, fee, registration, assignment, application), otherwise \"event\". "
+        'Its kind is "deadline" when it\'s something the reader must do or submit by that date '
+        '(a form, fee, registration, assignment, application), otherwise "event". '
         f"REFERENCE DATE (when this email was sent, for resolving 'tomorrow'/'this Friday'): "
         f"{_reference_date(email)}.\n\n"
         f"EXISTING NODES IN THIS TOPIC:\n{thread_lines}\n\n"
@@ -1064,8 +1064,7 @@ def ingest_email(
     prior_received = (existing_thread or {}).get("data", {}).get("received_at")
     if prior_received is None and existing_thread and existing_thread.get("created_at"):
         prior_received = {
-            u: existing_thread["created_at"]
-            for u in existing_thread["data"].get("source_uids", [])
+            u: existing_thread["created_at"] for u in existing_thread["data"].get("source_uids", [])
         }
     received_at = mail_timeline.merge_received(prior_received, email["uid"], email.get("date"))
     events = mail_timeline.merge_events(
