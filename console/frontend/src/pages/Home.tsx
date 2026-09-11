@@ -3,9 +3,11 @@ import { useEffect, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 
 import type { View } from "@/App"
+import { ActionItemsPanel } from "@/components/ActionItemsPanel"
 import { MailIngestProgress } from "@/components/MailIngestProgress"
 import { MailMindmap } from "@/components/MailMindmap"
 import { MailReviewQueue } from "@/components/MailReviewQueue"
+import { NeedsAttentionPanel } from "@/components/NeedsAttentionPanel"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -367,7 +369,11 @@ function MailPanel({ onAskAbout }: { onAskAbout: (question: string) => void }) {
         ))}
       </AnimatePresence>
 
+      <NeedsAttentionPanel key={`attention-${reviewKey}`} />
+
       <MailReviewQueue key={reviewKey} onResolved={refreshAfterReview} />
+
+      <ActionItemsPanel key={`actions-${reviewKey}`} />
 
       <motion.div whileHover={{ y: -4 }} transition={{ type: "spring", stiffness: 300 }}>
       <Card>

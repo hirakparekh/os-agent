@@ -205,6 +205,49 @@ def _phrase_hit(keyword: str, zone: str) -> bool:
     return bool(tokens) and f" {' '.join(tokens)} " in zone
 
 
+# A separate keyword list from category scoring — urgency is a different axis (how soon,
+# not what about), so it needs its own vocabulary and no threshold tuning shared with
+# arbitrate_category's confidence floors.
+URGENCY_PHRASES = [
+    "urgent", "asap", "immediately", "deadline", "final reminder", "last date",
+    "closing soon", "action required", "time-sensitive", "time sensitive",
+    "expires today", "last chance", "respond by", "due today", "due tomorrow",
+]
+
+
+def is_urgent(subject: str, body: str) -> bool:
+    """Deterministic urgency flag — no LLM. A subject hit is dispositive; a body hit is still
+    a signal, since "URGENT" in all-caps subjects is common but not universal."""
+    subject_zone = _normalize_zone(subject)
+    body_zone = _normalize_zone(body)
+    return any(_phrase_hit(p, subject_zone) or _phrase_hit(p, body_zone) for p in URGENCY_PHRASES)
+
+
+# Imperative verb + "by <window>" — matches "submit by Friday", "send it by 5 PM", "reply by
+# tomorrow", "complete this by 10th March". Deliberately narrow (verb-anchored) rather than
+# matching every stray "by" in a sentence, which would flag almost every email.
+_ACTION_ITEM_RE = re.compile(
+    r"\b(submit|send|complete|reply|register|apply|confirm|upload|fill|pay)\b"
+    r"[^.\n]{0,60}?\bby\b[^.\n]{0,30}",
+    re.IGNORECASE,
+)
+
+
+def extract_action_items(body: str) -> list[dict[str, str]]:
+    """Deterministic to-do extraction — no LLM. Each match is one candidate action item; the
+    caller decides what to do with duplicates across merges (see _ingest_message)."""
+    body = body or ""
+    seen: set[str] = set()
+    items: list[dict[str, str]] = []
+    for match in _ACTION_ITEM_RE.finditer(body):
+        text = re.sub(r"\s+", " ", match.group(0)).strip().rstrip(",;")
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            items.append({"text": text})
+    return items
+
+
 def score_categories(
     subject: str,
     body: str,
@@ -1008,6 +1051,19 @@ def _ingest_message(
         )
     calendar_events = [*prior_calendar_events, *([created_event] if created_event else [])]
 
+    # Both deterministic, no LLM — computed on every message so a thread's urgency reflects
+    # its most recent round (a "final reminder" reply should re-flag an otherwise-quiet
+    # thread), while action items accumulate across merges instead of only keeping the latest.
+    urgent = is_urgent(subject, message.get("body_text", "") or "") or bool(
+        (existing_thread or {}).get("data", {}).get("urgent")
+    )
+    prior_action_items = (existing_thread or {}).get("data", {}).get("action_items", [])
+    new_action_items = extract_action_items(message.get("body_text", "") or "")
+    seen_texts = {item["text"].lower() for item in prior_action_items}
+    action_items = prior_action_items + [
+        item for item in new_action_items if item["text"].lower() not in seen_texts
+    ]
+
     store.upsert(
         conn,
         "mail_thread",
@@ -1030,6 +1086,10 @@ def _ingest_message(
             # Google Calendar events auto-created from this thread's messages — kept so a
             # repeat ingest doesn't double-book, and so the UI's Undo can find the event id.
             "calendar_events": calendar_events,
+            # Deterministic "needs attention" signal (GET /api/needs-attention) and a unified
+            # to-do list (GET /api/action-items) — both computed with zero LLM cost.
+            "urgent": urgent,
+            "action_items": action_items,
             # Provenance for the UI and for debugging a wrong call: what each half of the
             # classifier thought, and how sure the combination was.
             "classification": {

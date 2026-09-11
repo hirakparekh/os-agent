@@ -537,6 +537,49 @@ def mail_review(conn: ConnDep) -> dict[str, Any]:
     return {"threads": items, "categories": categories}
 
 
+@app.get("/api/needs-attention")
+def needs_attention(conn: ConnDep) -> dict[str, Any]:
+    """Threads flagged urgent (brain/mail_ingest.py's deterministic keyword detector), across
+    every channel — one worklist instead of hunting through the mindmap per source."""
+    items: list[dict[str, Any]] = []
+    for thread in store.all_of_type(conn, "mail_thread"):
+        if not thread["data"].get("urgent"):
+            continue
+        category, topic = _thread_path(conn, thread["id"])
+        items.append(
+            {
+                "id": thread["id"],
+                "name": thread["title"],
+                "summary": thread.get("summary"),
+                "category": category,
+                "topic": topic,
+                "channel": thread["data"].get("channel", "gmail"),
+            }
+        )
+    return {"threads": items}
+
+
+@app.get("/api/action-items")
+def action_items(conn: ConnDep) -> dict[str, Any]:
+    """Every extracted to-do (brain/mail_ingest.py's deterministic regex extractor), flattened
+    across all threads and channels into one unified list."""
+    items: list[dict[str, Any]] = []
+    for thread in store.all_of_type(conn, "mail_thread"):
+        category, topic = _thread_path(conn, thread["id"])
+        for item in thread["data"].get("action_items") or []:
+            items.append(
+                {
+                    "text": item.get("text"),
+                    "thread_id": thread["id"],
+                    "thread_name": thread["title"],
+                    "category": category,
+                    "topic": topic,
+                    "channel": thread["data"].get("channel", "gmail"),
+                }
+            )
+    return {"items": items}
+
+
 class MailReclassifyRequest(BaseModel):
     thread_id: str
     category: str

@@ -326,3 +326,31 @@ export function reclassifyThread(
     body: JSON.stringify({ thread_id: threadId, category, topic: topic ?? null }),
   })
 }
+
+export interface NeedsAttentionItem {
+  id: string
+  name: string
+  summary?: string | null
+  category?: string | null
+  topic?: string | null
+  channel: string
+}
+
+/** Threads flagged urgent by the deterministic keyword detector, across every channel. */
+export function getNeedsAttention(): Promise<{ threads: NeedsAttentionItem[] }> {
+  return request<{ threads: NeedsAttentionItem[] }>("/api/needs-attention")
+}
+
+export interface ActionItem {
+  text: string
+  thread_id: string
+  thread_name: string
+  category?: string | null
+  topic?: string | null
+  channel: string
+}
+
+/** Every extracted to-do, flattened across all threads and channels into one list. */
+export function getActionItems(): Promise<{ items: ActionItem[] }> {
+  return request<{ items: ActionItem[] }>("/api/action-items")
+}

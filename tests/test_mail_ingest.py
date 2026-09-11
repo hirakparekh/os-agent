@@ -1391,3 +1391,75 @@ def test_ingest_message_namespaces_thread_ids_for_non_gmail_channels(tmp_path):
     }
     result = mail_ingest._ingest_message(conn, slack_message, config, channel="slack")
     assert result["thread_id"] == "mail:thread:slack:1700000000.000100"
+
+
+def test_is_urgent_matches_subject_and_body_phrases():
+    assert mail_ingest.is_urgent("URGENT: submit today", "hello") is True
+    assert mail_ingest.is_urgent("Weekly update", "This is a final reminder to register.") is True
+    assert mail_ingest.is_urgent("Weekly update", "Nothing time-critical here.") is False
+
+
+def test_extract_action_items_matches_imperative_by_phrases_and_dedupes():
+    body = (
+        "Please submit the form by Friday. Also submit the form by Friday. "
+        "Reply by tomorrow with your availability."
+    )
+    items = mail_ingest.extract_action_items(body)
+    texts = [i["text"] for i in items]
+    assert len(texts) == 2  # the duplicate "submit... by Friday" collapses
+    assert any(t.lower().startswith("submit") for t in texts)
+    assert any(t.lower().startswith("reply") for t in texts)
+
+
+def test_extract_action_items_returns_empty_for_plain_text():
+    assert mail_ingest.extract_action_items("Just a regular update, nothing due.") == []
+
+
+def test_ingest_email_flags_urgency_and_extracts_action_items(tmp_path, monkeypatch):
+    conn = _conn(tmp_path)
+    _fake_llm(monkeypatch, "Placements", topic="T")
+    email = _email(uid="1", subject="URGENT: interview shortlist")
+    email["body_text"] = "Please submit your resume by Friday to confirm your slot."
+
+    result = mail_ingest.ingest_email(conn, email, _defaults())
+    thread = store.get(conn, result["thread_id"])
+
+    assert thread["data"]["urgent"] is True
+    assert len(thread["data"]["action_items"]) == 1
+    assert "submit" in thread["data"]["action_items"][0]["text"].lower()
+
+
+def test_ingest_email_action_items_accumulate_across_merges(tmp_path, monkeypatch):
+    conn = _conn(tmp_path)
+    monkeypatch.setattr(
+        mail_ingest, "classify_email",
+        lambda message, findings, categories: {
+            "category": "Placements", "new_category": True, "topic": "T", "new_topic": True,
+        },
+    )
+
+    first = _email(uid="1", subject="Round 1")
+    first["body_text"] = "Please submit the form by Monday."
+    monkeypatch.setattr(
+        mail_ingest, "merge_or_create_thread",
+        lambda message, findings, existing: {
+            "action": "new", "merge_into_id": None, "summary": "s", "body": "b",
+        },
+    )
+    first_result = mail_ingest.ingest_email(conn, first, _defaults())
+
+    second = _email(uid="2", subject="Round 1")
+    second["body_text"] = "Please reply by Wednesday with your dietary preference."
+    monkeypatch.setattr(
+        mail_ingest, "merge_or_create_thread",
+        lambda message, findings, existing: {
+            "action": "merge", "merge_into_id": first_result["thread_id"],
+            "summary": "s", "body": "b",
+        },
+    )
+    mail_ingest.ingest_email(conn, second, _defaults())
+
+    thread = store.get(conn, first_result["thread_id"])
+    texts = [i["text"].lower() for i in thread["data"]["action_items"]]
+    assert any(t.startswith("submit") for t in texts)
+    assert any(t.startswith("reply") for t in texts)
