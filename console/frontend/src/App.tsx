@@ -286,42 +286,43 @@ export default function App() {
           </div>
         </header>
 
-        {view === "chat" ? (
-          <div className="min-h-0 flex-1">
-            <Chat seed={chatSeed} onSeedConsumed={() => setChatSeed(null)} />
-          </div>
-        ) : (
-          <div className="flex-1 overflow-auto p-6 md:p-10 relative">
-            {/* Subtle background glow effect */}
+        <div className={view === "chat" ? "flex-1 min-h-0 relative" : "flex-1 overflow-auto p-6 md:p-10 relative"}>
+          {/* Subtle background glow effect — skipped on Chat, which is full-bleed with its own
+              dark thread background rather than the padded/glowing page shell. */}
+          {view !== "chat" && (
             <div className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-primary/5 rounded-full blur-3xl opacity-50" />
+          )}
 
-            <div className="max-w-4xl mx-auto w-full relative z-10">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={view}
-                  initial={{ opacity: 0, y: 15, filter: "blur(4px)" }}
-                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-                  exit={{ opacity: 0, y: -15, filter: "blur(4px)" }}
-                  transition={{ duration: 0.25, ease: "easeOut" }}
-                >
-                  {view === "mail" && (
-                    <Home
-                      rail={rail}
-                      onNavigate={setView}
-                      onAskAbout={(question) => {
-                        setChatSeed(question)
-                        setView("chat")
-                      }}
-                    />
-                  )}
-                  {view === "analytics" && <Analytics />}
-                  {view === "applications" && <Applications onMailStatusChange={refresh} />}
-                  {view === "profile" && <Profile />}
-                </motion.div>
-              </AnimatePresence>
-            </div>
+          <div className={view === "chat" ? "h-full w-full relative z-10" : "max-w-4xl mx-auto w-full relative z-10"}>
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={view}
+                className={view === "chat" ? "h-full" : undefined}
+                initial={{ opacity: 0, y: 15, filter: "blur(4px)" }}
+                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                exit={{ opacity: 0, y: -15, filter: "blur(4px)" }}
+                transition={{ duration: 0.25, ease: "easeOut" }}
+              >
+                {view === "chat" && (
+                  <Chat seed={chatSeed} onSeedConsumed={() => setChatSeed(null)} />
+                )}
+                {view === "mail" && (
+                  <Home
+                    rail={rail}
+                    onNavigate={setView}
+                    onAskAbout={(question) => {
+                      setChatSeed(question)
+                      setView("chat")
+                    }}
+                  />
+                )}
+                {view === "analytics" && <Analytics />}
+                {view === "applications" && <Applications onMailStatusChange={refresh} />}
+                {view === "profile" && <Profile />}
+              </motion.div>
+            </AnimatePresence>
           </div>
-        )}
+        </div>
       </main>
     </div>
   )
