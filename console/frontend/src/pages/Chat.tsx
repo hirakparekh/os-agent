@@ -16,6 +16,7 @@ import {
 } from "@/api"
 import { ChatThread, type ThreadMessage } from "@/components/ChatThread"
 import { loadProfileDetails } from "@/lib/profileDetails"
+import { useVoice } from "@/lib/useVoice"
 
 function relativeTime(iso: string): string {
   // The API serializes naive UTC timestamps (SQLite has no timezone type), which JS would
@@ -56,6 +57,12 @@ export function Chat({
   // the bump is stale by the time it resolves, and applying it would wipe an optimistically
   // rendered message the user just sent.
   const loadSeq = useRef(0)
+  // A transcript is appended to whatever is already typed, never auto-sent — speech
+  // recognition errors should be fixable before they cost an LLM call.
+  const voice = useVoice({
+    onTranscript: (text) => setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text)),
+  })
+  const { stopPlayback } = voice
 
   useEffect(() => {
     let cancelled = false
@@ -77,6 +84,7 @@ export function Chat({
   }, [])
 
   useEffect(() => {
+    stopPlayback()
     if (activeId === null) {
       setMessages([])
       return
@@ -100,7 +108,7 @@ export function Chat({
     return () => {
       cancelled = true
     }
-  }, [activeId])
+  }, [activeId, stopPlayback])
 
   // A question arriving from the Mail tab starts a fresh conversation with it pre-filled —
   // deliberately not auto-sent, so it can be reworded before spending an LLM call.
@@ -164,6 +172,7 @@ export function Chat({
       const details = loadProfileDetails().map(({ key, value }) => ({ key, value }))
       const reply = await postChatMessage(sessionId, text, details)
       setMessages((prev) => [...prev, { id: reply.id, role: "assistant", content: reply.content }])
+      voice.autoSpeak(reply.id, reply.content)
       const updated = await listChatSessions()
       setSessions(updated)
     } catch (err) {
@@ -345,6 +354,7 @@ export function Chat({
           onInputChange={setInput}
           onSend={handleSend}
           emptyStatePrompt={"Ask something like \"What did Hevo Data's email say?\""}
+          voice={voice}
         />
       </div>
     </div>

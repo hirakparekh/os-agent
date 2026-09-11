@@ -109,6 +109,7 @@ into full text" (`brain/mail_ask.py`) — both bounded by prompt size, not seman
 | `POST/GET /sessions`, `GET/DELETE /sessions/{id}`, `POST /sessions/{id}/messages` | chat sessions persisted in the console's own DB; message POST calls `brain`'s `/api/ask` server-side |
 | `POST /onboarding` (admin/team_lead/hr), `GET /roster`, `GET /roster/me` | employee onboarding → ClickUp task + roster |
 | `GET /resume` | résumé retrieval |
+| `GET /voice/options`, `POST /voice/transcribe`, `POST /voice/speak` | Sarvam AI speech-to-text (`saaras:v3`) and text-to-speech (`bulbul:v3`), proxied so `SARVAM_API_KEY` never reaches the browser (`console/backend/voice.py`). A transcript is dropped into the chat composer for review, not auto-sent; long answers are split at sentence boundaries under Sarvam's 2500-char limit and stitched back into one WAV |
 
 ## Frontend (`console/frontend/src`)
 
