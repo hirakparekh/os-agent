@@ -1,6 +1,6 @@
-import { Loader2, Mail, MailX, Map, PlugZap, RefreshCw, Activity, ArrowUpRight, Zap } from "lucide-react"
+import { CalendarPlus, Loader2, Mail, MailX, Map, PlugZap, RefreshCw, Activity, ArrowUpRight, Undo2, Zap } from "lucide-react"
 import { useState } from "react"
-import { motion } from "framer-motion"
+import { AnimatePresence, motion } from "framer-motion"
 
 import type { View } from "@/App"
 import { MailIngestProgress } from "@/components/MailIngestProgress"
@@ -9,10 +9,12 @@ import { MailReviewQueue } from "@/components/MailReviewQueue"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
+  type CreatedCalendarEvent,
   type MailNode,
   type MailProgress,
   getMailTree,
   reloadMailStream,
+  undoCalendarEvent,
 } from "@/lib/brainApi"
 
 const WINDOW_OPTIONS = [
@@ -180,6 +182,28 @@ function MailPanel({ onAskAbout }: { onAskAbout: (question: string) => void }) {
 
   const [reviewKey, setReviewKey] = useState(0)
 
+  // Events the mail pipeline auto-added to Google Calendar during this sync — offered here as
+  // dismissible "Continue / Undo" cards rather than folded silently into the sync result, since
+  // writing to someone's real calendar is the kind of side effect worth a chance to reverse.
+  const [addedEvents, setAddedEvents] = useState<CreatedCalendarEvent[]>([])
+  const [undoingEventId, setUndoingEventId] = useState<string | null>(null)
+
+  function dismissEvent(eventId: string) {
+    setAddedEvents((prev) => prev.filter((e) => e.event_id !== eventId))
+  }
+
+  async function undoEvent(event: CreatedCalendarEvent) {
+    setUndoingEventId(event.event_id)
+    try {
+      await undoCalendarEvent(event.event_id, event.thread_id)
+      dismissEvent(event.event_id)
+    } catch {
+      // Leave the card up with its buttons live — the person can just try Undo again.
+    } finally {
+      setUndoingEventId(null)
+    }
+  }
+
   async function refreshTree() {
     setTree(await getMailTree())
   }
@@ -202,6 +226,10 @@ function MailPanel({ onAskAbout }: { onAskAbout: (question: string) => void }) {
       if (failure) throw new Error(failure.error ?? "Mail ingest failed.")
       const processed = events.find((e) => e.stage === "done")?.processed ?? 0
       setReloadResult(`Found ${processed} new email${processed === 1 ? "" : "s"}.`)
+      const newEvents = events
+        .map((e) => e.calendar_event)
+        .filter((e): e is CreatedCalendarEvent => Boolean(e))
+      if (newEvents.length > 0) setAddedEvents((prev) => [...prev, ...newEvents])
       // Newly ingested mail may itself be low-confidence, so re-run the review list.
       setReviewKey((k) => k + 1)
       if (showMindmap) await refreshTree()
@@ -241,8 +269,55 @@ function MailPanel({ onAskAbout }: { onAskAbout: (question: string) => void }) {
 
   return (
     <div className="flex flex-col gap-6">
+      <AnimatePresence>
+        {addedEvents.map((event) => (
+          <motion.div
+            key={event.event_id}
+            initial={{ opacity: 0, y: -10, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <Card className="border-primary/30 bg-primary/5">
+              <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+                <div className="flex items-start gap-3">
+                  <div className="h-8 w-8 shrink-0 rounded-full bg-primary/20 flex items-center justify-center">
+                    <CalendarPlus className="h-4 w-4 text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">
+                      Added <span className="font-semibold">"{event.title}"</span> to Google Calendar
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{event.start}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={undoingEventId === event.event_id}
+                    onClick={() => undoEvent(event)}
+                  >
+                    {undoingEventId === event.event_id ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Undo2 className="mr-1 h-4 w-4" />
+                    )}
+                    Undo
+                  </Button>
+                  <Button size="sm" onClick={() => dismissEvent(event.event_id)}>
+                    Continue
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+
       <MailReviewQueue key={reviewKey} onResolved={refreshAfterReview} />
 
+      <motion.div whileHover={{ y: -4 }} transition={{ type: "spring", stiffness: 300 }}>
       <Card>
         <CardHeader className="flex-row flex-wrap items-center justify-between gap-4 border-b border-border/50 bg-secondary/20 pb-4">
           <div>
@@ -293,6 +368,7 @@ function MailPanel({ onAskAbout }: { onAskAbout: (question: string) => void }) {
           </div>
         )}
       </Card>
+      </motion.div>
 
       {showMindmap && (
         <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>

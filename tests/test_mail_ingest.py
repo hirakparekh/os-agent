@@ -236,7 +236,7 @@ def test_run_marks_read_only_on_success(monkeypatch, tmp_path):
         lambda since_minutes=None, user_id=None: [_email(uid="1"), _email(uid="2", subject="bad")],
     )
 
-    def fake_ingest(conn_, email, config):
+    def fake_ingest(conn_, email, config, user_id=None):
         if email["uid"] == "2":
             raise ValueError("boom")
         return {
@@ -267,7 +267,7 @@ def test_run_marks_read_failure_does_not_abort_batch(monkeypatch, tmp_path):
         ],
     )
 
-    def fake_ingest(conn_, email, config):
+    def fake_ingest(conn_, email, config, user_id=None):
         return {
             "uid": email["uid"], "category": "C", "topic": "T",
             "thread_id": f"mail:thread:{email['uid']}", "action": "new",
@@ -1039,7 +1039,7 @@ def test_run_iter_keeps_going_after_one_bad_email(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def flaky(conn_, email, config):
+    def flaky(conn_, email, config, user_id=None):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("boom")

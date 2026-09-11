@@ -2,7 +2,7 @@ import { Check, Clock, ExternalLink, Plug, Plus, Shield, Network, Zap } from "lu
 import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 
-import { type Application, AVAILABLE_APPS, CORE_APPS, GMAIL_APP, connectApp, disconnectApp, getHealth } from "@/api"
+import { type Application, AVAILABLE_APPS, CORE_APPS, GMAIL_APP, GOOGLE_CALENDAR_APP, connectApp, disconnectApp, getHealth } from "@/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -14,7 +14,14 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { connectMail, disconnectMail, getMailStatus } from "@/lib/brainApi"
+import { connectCalendar, connectMail, disconnectCalendar, disconnectMail, getCalendarStatus, getMailStatus } from "@/lib/brainApi"
+
+// gmail and google_calendar are both OAuth flows hosted by the brain service, not this
+// backend's generic /applications/{id}/connect — same shape, different endpoint per app.
+const LOCAL_OAUTH_APPS: Record<string, { connect: () => Promise<{ connected: boolean; reason?: string }>; disconnect: () => Promise<{ connected: boolean }> }> = {
+  gmail: { connect: connectMail, disconnect: disconnectMail },
+  google_calendar: { connect: connectCalendar, disconnect: disconnectCalendar },
+}
 
 function AppCard({ id, name, description, connected, kind, credentialLabel, onChanged }: Application & { onChanged?: () => void }) {
   const [open, setOpen] = useState(false)
@@ -43,11 +50,12 @@ function AppCard({ id, name, description, connected, kind, credentialLabel, onCh
     }
   }
 
-  async function connectGmail() {
+  async function connectLocalOAuth() {
+    const flow = LOCAL_OAUTH_APPS[id]
     setBusy(true)
     setNote(null)
     try {
-      const res = await connectMail()
+      const res = await flow.connect()
       setDone(res.connected)
       // Say *why* it didn't take. Consent can succeed in the browser and still fail
       // server-side, and "try again" on a loop is the worst possible response to that.
@@ -57,7 +65,7 @@ function AppCard({ id, name, description, connected, kind, credentialLabel, onCh
       onChanged?.()
     } catch (err) {
       const detail = err instanceof Error ? err.message : ""
-      setNote(detail || "Couldn't reach the mail service — is it running?")
+      setNote(detail || "Couldn't reach the brain service — is it running?")
     } finally {
       setBusy(false)
     }
@@ -67,8 +75,9 @@ function AppCard({ id, name, description, connected, kind, credentialLabel, onCh
     setBusy(true)
     setNote(null)
     try {
-      if (id === "gmail") {
-        const res = await disconnectMail()
+      const flow = LOCAL_OAUTH_APPS[id]
+      if (flow) {
+        const res = await flow.disconnect()
         setDone(res.connected)
       } else {
         await disconnectApp(id)
@@ -119,17 +128,17 @@ function AppCard({ id, name, description, connected, kind, credentialLabel, onCh
         <CardContent className="flex flex-col gap-4 mt-auto pt-0 z-10">
           <div className="h-[1px] w-full bg-border/40 mb-2" />
           
-          {id === "gmail" && !done && (
+          {id in LOCAL_OAUTH_APPS && !done && (
             <div className="flex items-start gap-2 text-xs text-muted-foreground bg-secondary/30 p-2.5 rounded-md border border-border/40">
               <Shield className="h-3.5 w-3.5 shrink-0 mt-0.5" />
               <p>Uses secure Google OAuth. No terminal configuration required.</p>
             </div>
           )}
 
-          {id === "gmail" ? (
+          {id in LOCAL_OAUTH_APPS ? (
             <div className="flex gap-2 w-full">
               {!done && (
-                <Button size="sm" onClick={connectGmail} disabled={busy} className="w-full relative overflow-hidden group">
+                <Button size="sm" onClick={connectLocalOAuth} disabled={busy} className="w-full relative overflow-hidden group">
                   <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-in-out" />
                   {busy ? "Waiting..." : "Connect Account"}
                 </Button>
@@ -217,6 +226,7 @@ function AppCard({ id, name, description, connected, kind, credentialLabel, onCh
 export function Applications({ onMailStatusChange }: { onMailStatusChange?: () => void }) {
   const [statuses, setStatuses] = useState<Record<string, boolean> | null>(null)
   const [gmailConnected, setGmailConnected] = useState(false)
+  const [calendarConnected, setCalendarConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -231,6 +241,10 @@ export function Applications({ onMailStatusChange }: { onMailStatusChange?: () =
     getMailStatus()
       .then((s) => setGmailConnected(s.connected))
       .catch(() => setGmailConnected(false))
+
+    getCalendarStatus()
+      .then((s) => setCalendarConnected(s.connected))
+      .catch(() => setCalendarConnected(false))
   }, [])
 
   if (error) return (
@@ -254,11 +268,15 @@ export function Applications({ onMailStatusChange }: { onMailStatusChange?: () =
     getMailStatus()
       .then((s) => setGmailConnected(s.connected))
       .catch(() => setGmailConnected(false))
+    getCalendarStatus()
+      .then((s) => setCalendarConnected(s.connected))
+      .catch(() => setCalendarConnected(false))
     onMailStatusChange?.()
   }
 
   const all: Application[] = [
     { ...GMAIL_APP, connected: gmailConnected },
+    { ...GOOGLE_CALENDAR_APP, connected: calendarConnected },
     ...Object.entries(CORE_APPS).map(([id, meta]) => ({
       id,
       ...meta,

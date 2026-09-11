@@ -83,6 +83,14 @@ export function reloadMail(sinceMinutes: number): Promise<MailReloadResult> {
   })
 }
 
+export interface CreatedCalendarEvent {
+  event_id: string
+  title: string
+  start: string
+  end: string
+  thread_id: string
+}
+
 export interface MailProgress {
   stage: "connecting" | "fetched" | "ingesting" | "ingested" | "done" | "failed"
   total?: number
@@ -92,6 +100,9 @@ export interface MailProgress {
   topic?: string
   processed?: number
   error?: string
+  /** Set on an "ingested" event when this email described a dated event and Google Calendar
+   * was connected — the mail pipeline already created it; see brain/mail_ingest.py. */
+  calendar_event?: CreatedCalendarEvent | null
 }
 
 /**
@@ -164,6 +175,35 @@ export function disconnectMail(): Promise<MailStatus> {
 // the person finishes (or abandons) it — see brain/viz_server.py's mail_connect().
 export function connectMail(): Promise<MailStatus> {
   return request<MailStatus>("/api/mail/connect", { method: "POST" })
+}
+
+export interface CalendarStatus {
+  connected: boolean
+  /** Why the calendar isn't usable — set only when `connected` is false. */
+  reason?: string
+}
+
+export function getCalendarStatus(): Promise<CalendarStatus> {
+  return request<CalendarStatus>("/api/calendar/status")
+}
+
+export function disconnectCalendar(): Promise<CalendarStatus> {
+  return request<CalendarStatus>("/api/calendar/disconnect", { method: "POST" })
+}
+
+// Same shape as connectMail(): opens the OAuth consent browser tab on the machine running this
+// server and blocks until the person finishes (or abandons) it — see brain/viz_server.py's
+// calendar_connect().
+export function connectCalendar(): Promise<CalendarStatus> {
+  return request<CalendarStatus>("/api/calendar/connect", { method: "POST" })
+}
+
+/** Reverses an auto-created calendar event — the "Undo" button on the post-sync popup. */
+export function undoCalendarEvent(eventId: string, threadId: string): Promise<{ undone: boolean }> {
+  return request<{ undone: boolean }>(`/api/calendar/events/${encodeURIComponent(eventId)}/undo`, {
+    method: "POST",
+    body: JSON.stringify({ thread_id: threadId }),
+  })
 }
 
 export interface MailAskProfileDetail {

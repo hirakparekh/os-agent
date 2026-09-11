@@ -122,7 +122,6 @@ export async function getHealth(): Promise<HealthReport> {
     return {
       ok: false,
       integrations: [
-        { name: "clickup", status: "not_configured" },
         { name: "slack",   status: "not_configured" },
         { name: "fathom",  status: "not_configured" },
       ],
@@ -182,16 +181,18 @@ export interface Application {
 }
 
 // Integrations tracked by the ops backend. Live connected-status comes from getHealth();
-// this is just the display metadata. BACKEND: fold these into GET /applications when you
-// build it.
+// this is just the display metadata. Slack is a real integration: POST /applications/slack/
+// connect validates the bot token against Slack's own auth.test API and stores it server-side
+// (console/backend/applications.py) — nothing here is a placeholder.
 export const CORE_APPS: Record<string, Omit<Application, "id" | "connected">> = {
-  clickup: { name: "ClickUp", description: "Keep track of tasks and to-dos.", kind: "token", credentialLabel: "API token" },
-  slack: { name: "Slack", description: "Read and reply to your Slack messages.", kind: "oauth" },
+  slack: { name: "Slack", description: "Post and read messages in your workspace.", kind: "token", credentialLabel: "Bot token (xoxb-...)" },
 }
 
-// Gmail is wired up separately from this backend (see brain/emailtool.py's OAuth flow, not
-// this backend's /health) — its live connected state comes from brainApi.getMailStatus(),
-// not from here. `connected: false` is just the fallback before that status loads.
+// Gmail and Google Calendar are OAuth flows hosted by the brain service (their live connected
+// state comes from brainApi.getMailStatus() / getCalendarStatus(), not from getHealth()) —
+// `connected: false` here is just the fallback before that status loads. Both are real: the
+// "Connect" button opens the actual Google OAuth consent screen (see brain/emailtool.py and
+// brain/calendar_tool.py).
 export const GMAIL_APP: Omit<Application, "connected"> = {
   id: "gmail",
   name: "Gmail",
@@ -199,15 +200,16 @@ export const GMAIL_APP: Omit<Application, "connected"> = {
   kind: "oauth",
 }
 
-// Additional apps you can connect. BACKEND: this hardcoded catalog is a placeholder — replace
-// with GET /applications once that endpoint exists. Each needs a matching connect handler.
-export const AVAILABLE_APPS: Application[] = [
-  { id: "google_calendar", name: "Google Calendar", description: "See what's on your calendar.", connected: false, kind: "oauth" },
-  { id: "notion", name: "Notion", description: "Search your notes and docs.", connected: false, kind: "token", credentialLabel: "Integration token" },
-]
+export const GOOGLE_CALENDAR_APP: Omit<Application, "connected"> = {
+  id: "google_calendar",
+  name: "Google Calendar",
+  description: "See your real upcoming events when you ask the chat about your schedule.",
+  kind: "oauth",
+}
 
-// BACKEND TODO: implement POST /applications/{id}/connect (see the block above).
-// For "token" apps pass the secret; for "oauth" apps pass "" and expect { authUrl } back.
+// Additional apps you can connect via the generic token flow (POST /applications/{id}/connect).
+export const AVAILABLE_APPS: Application[] = []
+
 export function connectApp(id: string, credential: string): Promise<{ authUrl?: string }> {
   return request<{ authUrl?: string }>(`/applications/${id}/connect`, {
     method: "POST",
@@ -215,7 +217,6 @@ export function connectApp(id: string, credential: string): Promise<{ authUrl?: 
   })
 }
 
-// BACKEND TODO: implement POST /applications/{id}/disconnect (remove the stored secret).
 export function disconnectApp(id: string): Promise<void> {
   return request<void>(`/applications/${id}/disconnect`, { method: "POST" })
 }

@@ -5,6 +5,7 @@
 // same signal as a short worklist, and fixing one here teaches the classifier exactly as a
 // correction made in the map does (see brain/mail_ingest.learn_category_keywords).
 import { AlertTriangle, Check, Loader2 } from "lucide-react"
+import { motion } from "framer-motion"
 import { useCallback, useEffect, useState } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -72,7 +73,8 @@ export function MailReviewQueue({ onResolved }: { onResolved?: () => void | Prom
   }
 
   return (
-    <Card data-testid="review-queue">
+    <motion.div whileHover={{ y: -4 }} transition={{ type: "spring", stiffness: 300 }}>
+      <Card data-testid="review-queue">
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="flex items-center gap-2 text-base">
           <AlertTriangle className="h-4 w-4 text-caution-foreground" />
@@ -94,7 +96,12 @@ export function MailReviewQueue({ onResolved }: { onResolved?: () => void | Prom
             ) as string[]
             const selected = choice[item.id] ?? item.category ?? options[0] ?? ""
             return (
-              <li key={item.id} className="flex flex-col gap-2 py-3">
+              <motion.li
+                key={item.id}
+                className="flex flex-col gap-2 py-3 px-2 -mx-2 rounded-md"
+                whileHover={{ backgroundColor: "var(--secondary)" }}
+                transition={{ duration: 0.15 }}
+              >
                 <div className="flex min-w-0 flex-col">
                   <span className="truncate text-sm font-medium">{item.name}</span>
                   <span className="text-xs text-muted-foreground">
@@ -131,11 +138,12 @@ export function MailReviewQueue({ onResolved }: { onResolved?: () => void | Prom
                     Confirm
                   </Button>
                 </div>
-              </li>
+              </motion.li>
             )
           })}
         </ul>
       </CardContent>
-    </Card>
+      </Card>
+    </motion.div>
   )
 }

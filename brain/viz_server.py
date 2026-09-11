@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from brain import ask, ingest, mail_ask, mail_ingest, profile, store
+from brain import ask, calendar_tool, ingest, mail_ask, mail_ingest, profile, store
 from brain.auth import CurrentUser
 from brain.emailtool import _load_oauth_credentials, _token_path, mailbox_status
 from brain.notify import notify
@@ -122,9 +122,9 @@ class Question(BaseModel):
 
 
 @app.post("/api/ask")
-def ask_brain(q: Question, conn: ConnDep) -> dict[str, Any]:
+def ask_brain(q: Question, conn: ConnDep, user: CurrentUser) -> dict[str, Any]:
     """Natural-language question -> answer + the node path the brain walked (provenance)."""
-    return ask.ask(conn, q.question)
+    return ask.ask(conn, q.question, user_id=user)
 
 
 ALLOWED_SUFFIXES = {".pdf", ".docx", ".txt", ".md"}
@@ -295,6 +295,77 @@ def mail_connect(user: CurrentUser) -> dict[str, Any]:
             content={"connected": False, "error": f"Could not complete sign-in: {exc}"},
         )
     return mailbox_status(user)
+
+
+@app.get("/api/calendar/status")
+def calendar_status(user: CurrentUser) -> dict[str, Any]:
+    """Whether this user's Google Calendar can actually be read right now."""
+    return calendar_tool.calendar_status(user)
+
+
+@app.post("/api/calendar/disconnect")
+def calendar_disconnect(user: CurrentUser) -> dict[str, Any]:
+    """Revoke this user's cached Calendar OAuth token."""
+    calendar_tool.disconnect(user)
+    return calendar_tool.calendar_status(user)
+
+
+@app.post("/api/calendar/connect")
+def calendar_connect(user: CurrentUser) -> dict[str, Any]:
+    """Run the interactive OAuth consent flow for Calendar, same shape as /api/mail/connect."""
+    try:
+        calendar_tool.connect(user_id=user)
+    except Exception as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"connected": False, "error": f"Could not complete sign-in: {exc}"},
+        )
+    return calendar_tool.calendar_status(user)
+
+
+@app.get("/api/calendar/events")
+def calendar_events(user: CurrentUser) -> dict[str, Any]:
+    """Upcoming events on the user's primary calendar, for the chat context and a dashboard
+    widget. 502s with a clear reason rather than 500ing when the token is stale/missing."""
+    try:
+        events = calendar_tool.list_upcoming_events(user)
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={"events": [], "error": str(exc)})
+    return {"events": events}
+
+
+class UndoCalendarEventRequest(BaseModel):
+    # The mail thread this event was auto-created from, so its bookkeeping (mail_ingest.py's
+    # calendar_events list, used to avoid double-booking on a re-ingest) can be cleaned up too.
+    thread_id: str | None = None
+
+
+@app.post("/api/calendar/events/{event_id}/undo")
+def calendar_undo_event(
+    event_id: str, body: UndoCalendarEventRequest, user: CurrentUser, conn: ConnDep
+) -> dict[str, Any]:
+    """Delete a calendar event the mail pipeline just auto-created — the "Undo" side of the
+    popup shown right after a mail sync."""
+    try:
+        calendar_tool.delete_event(user, event_id)
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={"undone": False, "error": str(exc)})
+
+    if body.thread_id:
+        thread = store.get(conn, body.thread_id)
+        if thread:
+            existing = thread["data"].get("calendar_events") or []
+            remaining = [e for e in existing if e.get("event_id") != event_id]
+            if len(remaining) != len(existing):
+                store.upsert(
+                    conn,
+                    "mail_thread",
+                    {**thread["data"], "source_id": body.thread_id, "calendar_events": remaining},
+                    title=thread["title"],
+                    summary=thread["summary"],
+                    source=thread.get("source"),
+                )
+    return {"undone": True}
 
 
 class ProfileDetail(BaseModel):

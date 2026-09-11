@@ -22,11 +22,12 @@ import subprocess
 import sys
 from collections import Counter
 from collections.abc import Iterator
-from email.utils import parseaddr
+from datetime import datetime, timedelta
+from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
-from brain import bm25, profile, store
+from brain import bm25, calendar_tool, profile, store
 from brain.emailtool import ATTACHMENT_CACHE
 from brain.mail_attachments import process_attachment
 from brain.openrouter import call_openrouter
@@ -411,12 +412,28 @@ def classify_email(
     return json.loads(raw)
 
 
+def _reference_date(email: dict[str, Any]) -> str:
+    """The email's own Date header, not "now" — ingest can run hours or days after an email
+    arrived (a backlog catch-up), and relative phrases in the email ("this Friday", "tomorrow")
+    were written relative to when it was *sent*, not when it happens to be processed."""
+    raw = email.get("date") or ""
+    try:
+        dt = parsedate_to_datetime(raw)
+        if dt is not None:
+            return dt.strftime("%A, %Y-%m-%d")
+    except (TypeError, ValueError):
+        pass
+    return datetime.now().strftime("%A, %Y-%m-%d")
+
+
 def merge_or_create_thread(
     email: dict[str, Any],
     attachment_findings: list[dict[str, Any]],
     existing_threads: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """LLM call: merge into an existing thread node, or create a new one."""
+    """LLM call: merge into an existing thread node, or create a new one, and — in the same
+    call, since the model already has the full email in front of it — extract whether this
+    email describes a concrete, dated event worth adding to the user's calendar."""
     thread_lines = (
         "\n".join(
             f"- id={t['id']}: {t.get('summary', '')}" for t in existing_threads
@@ -440,13 +457,23 @@ def merge_or_create_thread(
         "the existing one coherently (a running picture, not a raw concatenation) "
         "and a fresh short summary.\n"
         "If new, write a body and summary for just this email.\n\n"
+        "Separately, decide whether this email describes something happening at a specific, "
+        "concrete date/time — an interview, exam, meeting, deadline, competition, festival, "
+        "or similar — as opposed to a vague or ongoing topic with no fixed occurrence. "
+        f"REFERENCE DATE (when this email was sent, for resolving 'tomorrow'/'this Friday'): "
+        f"{_reference_date(email)}.\n\n"
         f"EXISTING NODES IN THIS TOPIC:\n{thread_lines}\n\n"
         f"NEW EMAIL\nFrom: {email.get('from')}\nSubject: {email.get('subject')}\n"
         f"Body: {email.get('body_text', '')[:2000]}\n"
         f"Attachment findings:\n{findings_text}\n\n"
         "Reply with ONLY this JSON object, nothing else:\n"
         '{"action": "merge"|"new", "merge_into_id": "<id or null>", '
-        '"summary": "<routing digest, <=120 words>", "body": "<full content>"}'
+        '"summary": "<routing digest, <=120 words>", "body": "<full content>", '
+        '"event": {"has_event": true|false, "title": "<short event title, or empty>", '
+        '"start": "<YYYY-MM-DD, or YYYY-MM-DDTHH:MM:SS if a specific time is given; '
+        'empty if has_event is false>", '
+        '"end": "<same format, or empty to default to start + 1 hour>", '
+        '"location": "<or empty>"}}'
     )
     raw = _strip_fences(call_openrouter(prompt))
     return json.loads(raw)
@@ -701,8 +728,54 @@ def prune_empty_mail_nodes(conn: Any) -> list[str]:
     return removed
 
 
+def _resolve_event_times(event: dict[str, Any]) -> tuple[str, str] | None:
+    """Normalize the extractor's event.start/end into a (start, end) pair Calendar can use, or
+    None if there's nothing usable. A missing end defaults to start + 1 hour for a timed event,
+    or the same single day for an all-day (date-only) one."""
+    start = (event.get("start") or "").strip()
+    if not start:
+        return None
+    end = (event.get("end") or "").strip()
+    if end:
+        return start, end
+    if len(start) == 10:  # date-only, e.g. "2026-03-12"
+        return start, start
+    try:
+        start_dt = datetime.fromisoformat(start)
+    except ValueError:
+        return None
+    return start, (start_dt + timedelta(hours=1)).isoformat()
+
+
+def _create_calendar_event_for_thread(
+    event: dict[str, Any], uid: str, user_id: str | int | None
+) -> dict[str, Any] | None:
+    """If this email describes a dated event and the user's Google Calendar is connected, add
+    it — returning the bookkeeping record to store on the thread (and to surface to the UI so
+    it can offer an Undo), or None if nothing was created.
+
+    Best-effort by design: a flaky Calendar API call must not fail the whole mail ingest, so any
+    error here is swallowed rather than propagated.
+    """
+    if not event.get("has_event") or user_id is None:
+        return None
+    times = _resolve_event_times(event)
+    if not times:
+        return None
+    try:
+        if not calendar_tool.calendar_status(user_id).get("connected"):
+            return None
+        start, end = times
+        title = event.get("title") or "Untitled event"
+        location = event.get("location") or None
+        event_id = calendar_tool.create_event(user_id, title, start, end, location)
+    except Exception:
+        return None
+    return {"event_id": event_id, "title": title, "start": start, "end": end, "source_uid": uid}
+
+
 def ingest_email(
-    conn: Any, email: dict[str, Any], config: dict[str, Any]
+    conn: Any, email: dict[str, Any], config: dict[str, Any], user_id: str | int | None = None
 ) -> dict[str, Any]:
     """Full per-email pipeline: attachments -> classify -> merge/place -> store.
 
@@ -798,6 +871,16 @@ def ingest_email(
         classification["category"] = cat_title
         classification["topic"] = topic_title
 
+    prior_calendar_events = (existing_thread or {}).get("data", {}).get("calendar_events", [])
+    # Guard against double-booking the same email (e.g. a retried ingest after a mark-read
+    # failure on the previous attempt) — never a new API call for a uid already handled.
+    created_event = None
+    if not any(e.get("source_uid") == email["uid"] for e in prior_calendar_events):
+        created_event = _create_calendar_event_for_thread(
+            decision.get("event") or {}, email["uid"], user_id
+        )
+    calendar_events = [*prior_calendar_events, *([created_event] if created_event else [])]
+
     store.upsert(
         conn,
         "mail_thread",
@@ -813,6 +896,9 @@ def ingest_email(
             # away, so nothing downstream could answer "was I named in that spreadsheet?".
             # Persisting them is what makes attachments visible to mail Q&A.
             "attachments": _merge_attachments(existing_thread, findings),
+            # Google Calendar events auto-created from this thread's emails — kept so a repeat
+            # ingest doesn't double-book, and so the UI's Undo can find the event id later.
+            "calendar_events": calendar_events,
             # Provenance for the UI and for debugging a wrong call: what each half of the
             # classifier thought, and how sure the combination was.
             "classification": {
@@ -844,6 +930,7 @@ def ingest_email(
         "thread_id": thread_id,
         "action": decision["action"],
         "confidence": confidence,
+        "calendar_event": {**created_event, "thread_id": thread_id} if created_event else None,
     }
 
 
@@ -918,7 +1005,7 @@ def run_iter(
         # Announce *before* the slow part, so the UI can name what it is currently working on.
         yield {"stage": "ingesting", "done": index - 1, "total": total, "subject": subject}
         try:
-            result = ingest_email(conn, email, config)
+            result = ingest_email(conn, email, config, user_id=user_id)
             mark_email_read(email["uid"], user_id=user_id)
         except (Exception, SystemExit) as exc:  # one bad email must not stop the whole run
             result = {"uid": email.get("uid"), "error": str(exc)}
@@ -934,6 +1021,7 @@ def run_iter(
             "subject": subject,
             "category": result.get("category"),
             "topic": result.get("topic"),
+            "calendar_event": result.get("calendar_event"),
         }
 
     yield {"stage": "done", "processed": len(results), "results": results}

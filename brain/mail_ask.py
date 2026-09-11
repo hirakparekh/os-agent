@@ -13,6 +13,7 @@ MailChat UI, which has no "sources" affordance today.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from brain import bm25, profile, store
@@ -30,7 +31,11 @@ longer only if the question needs a list). Do not mention internal details like 
 
 Attachment findings are authoritative. They come from actually reading the file, whereas a
 thread's summary is prose written earlier and may be out of date — where the two disagree
-about whether an attachment mentions the user, trust the attachment finding."""
+about whether an attachment mentions the user, trust the attachment finding.
+
+A TODAY line gives the current real-world date. Use it to resolve relative time questions
+("today", "this week", "how many days until the deadline", "is this overdue") — never guess
+today's date from anything else."""
 
 
 def _walk_tree(conn: Any) -> list[tuple[str, str, dict[str, Any]]]:
@@ -170,8 +175,10 @@ def build_prompt(
     )
     # Not named `profile`: that would shadow the imported brain.profile module.
     profile_block = _format_profile(profile_details)
+    today = datetime.now().strftime("%A, %Y-%m-%d")
     return (
         f"{SYSTEM}\n\n"
+        f"=== TODAY ===\n{today}\n\n"
         f"=== MAIL OVERVIEW (every thread, one line each) ===\n{overview}\n\n"
         f"=== RELEVANT THREADS IN FULL ===\n{full}\n\n"
         f"=== ABOUT THE PERSON ASKING (optional context) ===\n{profile_block}\n\n"

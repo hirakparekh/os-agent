@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from console.backend.integrations_store import get_secret
+
 # Local default: a Postgres on localhost. In Docker this is overridden to the `db` service.
 DEFAULT_DATABASE_URL = "postgresql+psycopg://ops:ops@localhost:5433/ops_console"
 
@@ -33,7 +35,9 @@ class Settings:
     def from_env(cls) -> Settings:
         return cls(
             clickup_token=os.environ.get("CLICKUP_TOKEN"),
-            slack_bot_token=os.environ.get("SLACK_BOT_TOKEN"),
+            # The env var is a deploy-time override; a token pasted into the Applications UI
+            # (stored via console/backend/applications.py) works without an env var or restart.
+            slack_bot_token=os.environ.get("SLACK_BOT_TOKEN") or get_secret("slack_bot_token"),
             fathom_api_key=os.environ.get("FATHOM_API_KEY"),
             admin_email=os.environ.get("OPS_ADMIN_EMAIL", "admin@agent-os.local"),
             admin_password=os.environ.get("OPS_ADMIN_PASSWORD", "changeme"),

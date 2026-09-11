@@ -1,4 +1,4 @@
-import { LogOut } from "lucide-react"
+import { LogOut, PanelLeftClose, PanelLeftOpen } from "lucide-react"
 import { useEffect, useState } from "react"
 import { LayoutDashboard, MessageSquare, User, Plug, CheckCircle2, XCircle } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
@@ -33,6 +33,13 @@ export default function App() {
   const [token, setTokenState] = useState<string | null>(getToken())
   const [checkingSession, setCheckingSession] = useState(!!getToken())
   const [view, setView] = useState<View>("chat")
+  // Persisted per-browser, not per-account — a layout preference, not app state worth syncing.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem("sidebarCollapsed") === "1",
+  )
+  useEffect(() => {
+    localStorage.setItem("sidebarCollapsed", sidebarCollapsed ? "1" : "0")
+  }, [sidebarCollapsed])
   // A question handed from the Mail tab to the Chat tab ("Ask about this thread"). Lives here
   // because the two are sibling views with no router to carry state between them.
   const [chatSeed, setChatSeed] = useState<string | null>(null)
@@ -138,16 +145,32 @@ export default function App() {
   return (
     <div className="flex min-h-screen bg-background text-foreground selection:bg-primary/30">
       {/* Sidebar Navigation */}
-      <aside className="w-64 border-r border-border bg-card flex-col hidden md:flex z-10 shadow-xl shadow-black/10">
-        <div className="h-16 flex items-center px-6 border-b border-border/50">
-          <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground shadow-[0_0_15px_rgba(79,70,229,0.5)]">
+      <aside
+        className={`${sidebarCollapsed ? "w-20" : "w-64"} border-r border-border bg-card flex-col hidden md:flex z-10 shadow-xl shadow-black/10 transition-[width] duration-200`}
+      >
+        <div className="h-16 flex items-center justify-between px-4 border-b border-border/50">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground shadow-[0_0_15px_rgba(79,70,229,0.5)]">
               A
             </div>
-            <span className="text-sm font-semibold tracking-wide">Agent OS</span>
+            {!sidebarCollapsed && (
+              <span className="text-sm font-semibold tracking-wide truncate">Agent OS</span>
+            )}
           </div>
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed((c) => !c)}
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
+          >
+            {sidebarCollapsed ? (
+              <PanelLeftOpen className="h-4 w-4" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" />
+            )}
+          </button>
         </div>
-        
+
         <nav className="flex-1 px-4 py-6 space-y-1">
           {NAV.map((n) => {
             const Icon = n.icon
@@ -157,41 +180,61 @@ export default function App() {
                 key={n.view}
                 type="button"
                 onClick={() => setView(n.view)}
+                title={sidebarCollapsed ? n.label : undefined}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
-                  active 
-                    ? "bg-primary/10 text-primary" 
+                  sidebarCollapsed ? "justify-center" : ""
+                } ${
+                  active
+                    ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
                 }`}
               >
-                <Icon className={`h-4 w-4 ${active ? "text-primary" : "opacity-70"}`} />
-                {n.label}
+                <Icon className={`h-4 w-4 shrink-0 ${active ? "text-primary" : "opacity-70"}`} />
+                {!sidebarCollapsed && n.label}
               </button>
             )
           })}
         </nav>
 
         <div className="p-4 border-t border-border/50">
-          <div className="flex items-center justify-between text-[11px] uppercase tracking-wider font-semibold text-muted-foreground mb-3 px-2">
-            <span>System Status</span>
-            <ThemeToggle />
-          </div>
-          <div className="flex items-center gap-3 rounded-lg bg-secondary/30 px-3 py-2.5 border border-border/30">
+          {!sidebarCollapsed && (
+            <div className="flex items-center justify-between text-[11px] uppercase tracking-wider font-semibold text-muted-foreground mb-3 px-2">
+              <span>System Status</span>
+              <ThemeToggle />
+            </div>
+          )}
+          <div
+            title={sidebarCollapsed ? (rail.mailConnected ? "Gmail Connected" : "Gmail Disconnected") : undefined}
+            className={`flex items-center gap-3 rounded-lg bg-secondary/30 py-2.5 border border-border/30 ${
+              sidebarCollapsed ? "justify-center px-0" : "px-3"
+            }`}
+          >
             {rail.mailConnected ? (
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
             ) : (
-              <XCircle className="h-4 w-4 text-muted-foreground" />
+              <XCircle className="h-4 w-4 shrink-0 text-muted-foreground" />
             )}
-            <span className="text-xs font-medium text-secondary-foreground">
-              {rail.mailConnected ? "Gmail Connected" : "Gmail Disconnected"}
-            </span>
+            {!sidebarCollapsed && (
+              <span className="text-xs font-medium text-secondary-foreground">
+                {rail.mailConnected ? "Gmail Connected" : "Gmail Disconnected"}
+              </span>
+            )}
           </div>
+          {sidebarCollapsed && (
+            <div className="mt-3 flex justify-center">
+              <ThemeToggle />
+            </div>
+          )}
           <button
             type="button"
             onClick={handleLogout}
-            className="mt-3 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground"
+            title={sidebarCollapsed ? "Log out" : undefined}
+            className={`mt-3 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground ${
+              sidebarCollapsed ? "justify-center" : ""
+            }`}
           >
-            <LogOut className="h-4 w-4" />
-            Log out
+            <LogOut className="h-4 w-4 shrink-0" />
+            {!sidebarCollapsed && "Log out"}
           </button>
         </div>
       </aside>
