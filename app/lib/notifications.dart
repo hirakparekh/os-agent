@@ -4,7 +4,6 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'api.dart';
 import 'app_state.dart';
-import 'models.dart';
 
 /// Tells the user about urgent mail they would otherwise miss.
 ///
