@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from brain import ask, calendar_tool, ingest, mail_ask, mail_ingest, profile, store
+from brain import ask, calendar_tool, ingest, mail_ask, mail_ingest, profile, slack_ingest, store
 from brain.auth import CurrentUser
 from brain.emailtool import _load_oauth_credentials, _token_path, mailbox_status
 from brain.notify import notify
@@ -253,6 +253,37 @@ def mail_reload_stream(
     )
 
 
+@app.get("/api/slack/status")
+def slack_ingest_status(conn: ConnDep) -> dict[str, Any]:
+    """Whether Slack ingestion can run right now (bot token connected + a channel configured)."""
+    return slack_ingest.channel_status(conn)
+
+
+@app.post("/api/slack/reload")
+def slack_reload(user: CurrentUser, conn: ConnDep) -> dict[str, Any]:
+    """Ingest new messages from the configured Slack channel into the caller's own tree."""
+    results = slack_ingest.run(conn, user_id=user)
+    return {"processed": len(results), "results": results}
+
+
+@app.post("/api/slack/reload/stream")
+def slack_reload_stream(user: CurrentUser, conn: ConnDep) -> StreamingResponse:
+    """Same work as /api/slack/reload, streamed — same NDJSON shape as /api/mail/reload/stream."""
+
+    def events() -> Iterator[str]:
+        try:
+            for event in slack_ingest.run_iter(conn, user_id=user):
+                yield json.dumps(event) + "\n"
+        except (Exception, SystemExit) as exc:
+            yield json.dumps({"stage": "failed", "error": str(exc)}) + "\n"
+
+    return StreamingResponse(
+        events(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/api/mail/status")
 def mail_status(user: CurrentUser) -> dict[str, Any]:
     """Whether this user's mailbox can actually be authenticated as.
@@ -442,7 +473,11 @@ class SettingsUpdate(BaseModel):
 def get_settings(conn: ConnDep) -> dict[str, Any]:
     """This user's saved pipeline settings, filled in with defaults for anything unset."""
     config = mail_ingest.config_with_settings(conn, mail_ingest.load_config())
-    return {"offline_mode": bool(config.get("offline_mode"))}
+    settings = mail_ingest.get_settings(conn)
+    return {
+        "offline_mode": bool(config.get("offline_mode")),
+        "slack_channel_id": settings.get("slack_channel_id") or "",
+    }
 
 
 @app.put("/api/settings")
@@ -450,6 +485,17 @@ def put_settings(body: SettingsUpdate, conn: ConnDep) -> dict[str, Any]:
     """Toggle offline mode: when on, mail ingest never calls the LLM (see
     brain/mail_ingest.py's config_with_settings / _offline_merge_or_create_thread)."""
     return mail_ingest.set_offline_mode(conn, body.offline_mode)
+
+
+class SlackChannelUpdate(BaseModel):
+    channel_id: str
+
+
+@app.put("/api/slack/channel")
+def put_slack_channel(body: SlackChannelUpdate, conn: ConnDep) -> dict[str, Any]:
+    """Which Slack channel /api/slack/reload pulls history from (a channel ID, e.g. C0123ABC —
+    visible in a channel's "Copy link", not its display name)."""
+    return mail_ingest.set_slack_channel(conn, body.channel_id.strip())
 
 
 def _thread_path(conn: Any, thread_id: str) -> tuple[str | None, str | None]:

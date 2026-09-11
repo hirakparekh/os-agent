@@ -106,24 +106,21 @@ export interface MailProgress {
 }
 
 /**
- * Ingest mail, reporting progress as it happens.
+ * Read an NDJSON progress stream from `path`, calling `onProgress` per line.
  *
- * Reads the NDJSON stream from /api/mail/reload/stream rather than waiting on one blocking
- * call, so the UI can show a percentage that is actually true. Uses fetch (not EventSource)
- * because EventSource cannot send an Authorization header.
+ * Shared by mail and Slack sync — both endpoints emit the same {stage, done, total, ...}
+ * shape (see brain/mail_ingest.py's run_iter and brain/slack_ingest.py's run_iter). Uses
+ * fetch (not EventSource) because EventSource cannot send an Authorization header.
  */
-export async function reloadMailStream(
-  sinceMinutes: number,
-  onProgress: (event: MailProgress) => void,
-): Promise<MailProgress[]> {
+async function streamNdjson(path: string, body: unknown, onProgress: (event: MailProgress) => void): Promise<MailProgress[]> {
   const headers = new Headers({ "Content-Type": "application/json" })
   const token = getToken()
   if (token) headers.set("Authorization", `Bearer ${token}`)
 
-  const res = await fetch(`${BASE_URL}/api/mail/reload/stream`, {
+  const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ since_minutes: sinceMinutes }),
+    body: JSON.stringify(body),
   })
   if (res.status === 401) {
     clearToken()
@@ -153,6 +150,36 @@ export async function reloadMailStream(
     }
   }
   return seen
+}
+
+/** Ingest mail, reporting progress as it happens — see streamNdjson. */
+export function reloadMailStream(
+  sinceMinutes: number,
+  onProgress: (event: MailProgress) => void,
+): Promise<MailProgress[]> {
+  return streamNdjson("/api/mail/reload/stream", { since_minutes: sinceMinutes }, onProgress)
+}
+
+/** Ingest new Slack messages from the configured channel, reporting progress as it happens. */
+export function reloadSlackStream(onProgress: (event: MailProgress) => void): Promise<MailProgress[]> {
+  return streamNdjson("/api/slack/reload/stream", {}, onProgress)
+}
+
+export interface SlackIngestStatus {
+  connected: boolean
+  reason?: string
+  channel_id?: string
+}
+
+export function getSlackIngestStatus(): Promise<SlackIngestStatus> {
+  return request<SlackIngestStatus>("/api/slack/status")
+}
+
+export function setSlackChannel(channelId: string): Promise<{ slack_channel_id?: string }> {
+  return request<{ slack_channel_id?: string }>("/api/slack/channel", {
+    method: "PUT",
+    body: JSON.stringify({ channel_id: channelId }),
+  })
 }
 
 export interface MailStatus {
@@ -251,6 +278,8 @@ export interface MailSettings {
   /** When true, mail ingest never calls the LLM — pure keyword classification, no thread
    * summarization/merging synthesis, no calendar-event extraction. See brain/mail_ingest.py. */
   offline_mode: boolean
+  /** The Slack channel ID /api/slack/reload pulls history from, or "" if unset. */
+  slack_channel_id: string
 }
 
 export function getSettings(): Promise<MailSettings> {

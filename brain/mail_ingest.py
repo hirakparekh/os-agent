@@ -692,17 +692,26 @@ def get_settings(conn: Any) -> dict[str, Any]:
     return {k: v for k, v in entity["data"].items() if k != "source_id"}
 
 
-def set_offline_mode(conn: Any, enabled: bool) -> dict[str, Any]:
-    """Persist the offline-mode toggle for this user (brain.db is already per-user)."""
+def _update_settings(conn: Any, **updates: Any) -> dict[str, Any]:
     store.upsert(
         conn,
         "mail_settings",
-        {"source_id": SETTINGS_ID, "offline_mode": enabled},
+        {"source_id": SETTINGS_ID, **get_settings(conn), **updates},
         title="Mail settings",
         summary="Per-user mail pipeline settings.",
         source="user",
     )
     return get_settings(conn)
+
+
+def set_offline_mode(conn: Any, enabled: bool) -> dict[str, Any]:
+    """Persist the offline-mode toggle for this user (brain.db is already per-user)."""
+    return _update_settings(conn, offline_mode=enabled)
+
+
+def set_slack_channel(conn: Any, channel_id: str) -> dict[str, Any]:
+    """Persist which Slack channel /api/slack/reload pulls history from for this user."""
+    return _update_settings(conn, slack_channel_id=channel_id)
 
 
 def config_with_settings(conn: Any, config: dict[str, Any]) -> dict[str, Any]:
