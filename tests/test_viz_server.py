@@ -275,17 +275,33 @@ def test_reload_stream_requires_authentication():
 def test_needs_attention_lists_only_urgent_threads(client, conn):
     topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
     store.upsert(
-        conn, "mail_thread",
-        {"source_id": "mail:thread:1", "title": "Urgent!", "body": "b",
-         "source_uids": ["1"], "urgent": True},
-        title="Urgent!", summary="s", source="mail",
+        conn,
+        "mail_thread",
+        {
+            "source_id": "mail:thread:1",
+            "title": "Urgent!",
+            "body": "b",
+            "source_uids": ["1"],
+            "urgent": True,
+        },
+        title="Urgent!",
+        summary="s",
+        source="mail",
     )
     store.add_edge(conn, topic, "mail:thread:1", "contains")
     store.upsert(
-        conn, "mail_thread",
-        {"source_id": "mail:thread:2", "title": "Calm", "body": "b",
-         "source_uids": ["2"], "urgent": False},
-        title="Calm", summary="s", source="mail",
+        conn,
+        "mail_thread",
+        {
+            "source_id": "mail:thread:2",
+            "title": "Calm",
+            "body": "b",
+            "source_uids": ["2"],
+            "urgent": False,
+        },
+        title="Calm",
+        summary="s",
+        source="mail",
     )
     store.add_edge(conn, topic, "mail:thread:2", "contains")
 
@@ -298,10 +314,18 @@ def test_needs_attention_lists_only_urgent_threads(client, conn):
 def test_action_items_flattens_across_threads(client, conn):
     topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
     store.upsert(
-        conn, "mail_thread",
-        {"source_id": "mail:thread:1", "title": "T1", "body": "b", "source_uids": ["1"],
-         "action_items": [{"text": "submit resume by Friday"}]},
-        title="T1", summary="s", source="mail",
+        conn,
+        "mail_thread",
+        {
+            "source_id": "mail:thread:1",
+            "title": "T1",
+            "body": "b",
+            "source_uids": ["1"],
+            "action_items": [{"text": "submit resume by Friday"}],
+        },
+        title="T1",
+        summary="s",
+        source="mail",
     )
     store.add_edge(conn, topic, "mail:thread:1", "contains")
 
@@ -316,9 +340,12 @@ def test_action_items_flattens_across_threads(client, conn):
 def test_analytics_category_volume_buckets_by_day(client, conn):
     topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
     store.upsert(
-        conn, "mail_thread",
+        conn,
+        "mail_thread",
         {"source_id": "mail:thread:1", "title": "T1", "body": "b", "source_uids": ["1"]},
-        title="T1", summary="s", source="mail",
+        title="T1",
+        summary="s",
+        source="mail",
     )
     store.add_edge(conn, topic, "mail:thread:1", "contains")
 
@@ -340,10 +367,18 @@ def test_analytics_category_volume_rejects_an_invalid_bucket(client):
 def test_mail_tree_export_renders_markdown_with_category_topic_and_thread(client, conn):
     topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
     store.upsert(
-        conn, "mail_thread",
-        {"source_id": "mail:thread:1", "title": "Interview shortlist", "body": "b",
-         "source_uids": ["1"], "channel": "slack"},
-        title="Interview shortlist", summary="Shortlisted for round 1.", source="mail",
+        conn,
+        "mail_thread",
+        {
+            "source_id": "mail:thread:1",
+            "title": "Interview shortlist",
+            "body": "b",
+            "source_uids": ["1"],
+            "channel": "slack",
+        },
+        title="Interview shortlist",
+        summary="Shortlisted for round 1.",
+        source="mail",
     )
     store.add_edge(conn, topic, "mail:thread:1", "contains")
 
@@ -376,10 +411,19 @@ def _touch(conn, thread_id, *, created_at, updated_at):
 
 def _urgent_thread(conn, thread_id, title, topic_id, *, action_text="submit form by Friday"):
     store.upsert(
-        conn, "mail_thread",
-        {"source_id": thread_id, "title": title, "body": "b", "source_uids": [thread_id[-1]],
-         "urgent": True, "action_items": [{"text": action_text}]},
-        title=title, summary="s", source="mail",
+        conn,
+        "mail_thread",
+        {
+            "source_id": thread_id,
+            "title": title,
+            "body": "b",
+            "source_uids": [thread_id[-1]],
+            "urgent": True,
+            "action_items": [{"text": action_text}],
+        },
+        title=title,
+        summary="s",
+        source="mail",
     )
     store.add_edge(conn, topic_id, thread_id, "contains")
 
@@ -388,11 +432,19 @@ def test_needs_attention_since_filters_on_update_time(client, conn):
     topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
     _urgent_thread(conn, "mail:thread:1", "Old and quiet", topic)
     _urgent_thread(conn, "mail:thread:2", "Just became urgent", topic)
-    _touch(conn, "mail:thread:1", created_at="2026-09-01T00:00:00+00:00",
-           updated_at="2026-09-01T00:00:00+00:00")
+    _touch(
+        conn,
+        "mail:thread:1",
+        created_at="2026-09-01T00:00:00+00:00",
+        updated_at="2026-09-01T00:00:00+00:00",
+    )
     # Created long ago but touched just now — exactly the case a poller must still catch.
-    _touch(conn, "mail:thread:2", created_at="2026-09-01T00:00:00+00:00",
-           updated_at="2026-09-10T12:00:00+00:00")
+    _touch(
+        conn,
+        "mail:thread:2",
+        created_at="2026-09-01T00:00:00+00:00",
+        updated_at="2026-09-10T12:00:00+00:00",
+    )
 
     everything = client.get("/api/needs-attention").json()["threads"]
     assert {t["name"] for t in everything} == {"Old and quiet", "Just became urgent"}
@@ -405,10 +457,18 @@ def test_action_items_since_filters_the_same_way(client, conn):
     topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
     _urgent_thread(conn, "mail:thread:1", "Old", topic, action_text="submit old form by Friday")
     _urgent_thread(conn, "mail:thread:2", "New", topic, action_text="reply by Wednesday")
-    _touch(conn, "mail:thread:1", created_at="2026-09-01T00:00:00+00:00",
-           updated_at="2026-09-01T00:00:00+00:00")
-    _touch(conn, "mail:thread:2", created_at="2026-09-01T00:00:00+00:00",
-           updated_at="2026-09-10T12:00:00+00:00")
+    _touch(
+        conn,
+        "mail:thread:1",
+        created_at="2026-09-01T00:00:00+00:00",
+        updated_at="2026-09-01T00:00:00+00:00",
+    )
+    _touch(
+        conn,
+        "mail:thread:2",
+        created_at="2026-09-01T00:00:00+00:00",
+        updated_at="2026-09-10T12:00:00+00:00",
+    )
 
     assert len(client.get("/api/action-items").json()["items"]) == 2
     recent = client.get("/api/action-items?since=2026-09-05T00:00:00+00:00").json()["items"]

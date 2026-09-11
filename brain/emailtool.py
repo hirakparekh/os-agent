@@ -44,7 +44,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -221,10 +221,16 @@ def mailbox_status(user_id: str | int | None = None) -> dict[str, Any]:
     except Exception as exc:  # malformed token file, unreadable path, …
         return {"connected": False, "reason": f"stored credentials are unusable: {exc}"}
     if not creds or not creds.valid:
-        return {"connected": False, "reason": "stored credentials could not be refreshed",
-                "needs_reconnect": True}
-    return {"connected": True, "email": _mailbox_email(user_id),
-            "connected_at": _connected_at(user_id)}
+        return {
+            "connected": False,
+            "reason": "stored credentials could not be refreshed",
+            "needs_reconnect": True,
+        }
+    return {
+        "connected": True,
+        "email": _mailbox_email(user_id),
+        "connected_at": _connected_at(user_id),
+    }
 
 
 def _oauth_login(
@@ -336,7 +342,7 @@ def _save_attachments(uid: str, msg):
 def cmd_list(since_minutes: int | None = None, user_id: str | None = None):
     cutoff = None
     if since_minutes is not None:
-        cutoff = datetime.now(timezone.utc) - timedelta(minutes=since_minutes)
+        cutoff = datetime.now(UTC) - timedelta(minutes=since_minutes)
 
     conn = _connect(user_id=user_id)
     try:
@@ -362,7 +368,7 @@ def cmd_list(since_minutes: int | None = None, user_id: str | None = None):
                 try:
                     msg_date = email.utils.parsedate_to_datetime(str(msg.get("Date", "")))
                     if msg_date.tzinfo is None:
-                        msg_date = msg_date.replace(tzinfo=timezone.utc)
+                        msg_date = msg_date.replace(tzinfo=UTC)
                 except (TypeError, ValueError):
                     continue
                 if msg_date < cutoff:
@@ -410,8 +416,9 @@ def cmd_auth(user_id: str | None = None):
             f"{status.get('reason', 'not connected')} — connect Gmail from the console "
             "(Integrations -> Gmail), which opens Google consent in your own browser."
         )
-    print(json.dumps({"authenticated": status.get("email"),
-                      "token_path": str(_token_path(user_id))}))
+    print(
+        json.dumps({"authenticated": status.get("email"), "token_path": str(_token_path(user_id))})
+    )
 
 
 def main():

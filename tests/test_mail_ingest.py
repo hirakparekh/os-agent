@@ -1514,13 +1514,18 @@ def test_ingest_message_is_channel_agnostic_and_merges_across_channels(tmp_path,
     conn = _conn(tmp_path)
     subject = "Accenture Off-Campus Drive - interview shortlisted"
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
+        mail_ingest,
+        "classify_email",
         lambda message, findings, categories: {
-            "category": "Placements", "new_category": True, "topic": subject, "new_topic": True,
+            "category": "Placements",
+            "new_category": True,
+            "topic": subject,
+            "new_topic": True,
         },
     )
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda message, findings, existing: (
             {"action": "merge", "merge_into_id": existing[0]["id"], "summary": "s", "body": "b"}
             if existing
@@ -1532,12 +1537,13 @@ def test_ingest_message_is_channel_agnostic_and_merges_across_channels(tmp_path,
         conn, _email(uid="1", subject=subject), _defaults(), channel="gmail"
     )
     slack_message = {
-        "uid": "1700000000.000100", "from": "U123", "subject": subject,
-        "body_text": "Same subject, different channel.", "attachments": [],
+        "uid": "1700000000.000100",
+        "from": "U123",
+        "subject": subject,
+        "body_text": "Same subject, different channel.",
+        "attachments": [],
     }
-    slack_result = mail_ingest._ingest_message(
-        conn, slack_message, _defaults(), channel="slack"
-    )
+    slack_result = mail_ingest._ingest_message(conn, slack_message, _defaults(), channel="slack")
 
     assert slack_result["thread_id"] == gmail_result["thread_id"]
     thread = store.get(conn, gmail_result["thread_id"])
@@ -1549,8 +1555,11 @@ def test_ingest_message_namespaces_thread_ids_for_non_gmail_channels(tmp_path):
     conn = _conn(tmp_path)
     config = {**_defaults(), "offline_mode": True}
     slack_message = {
-        "uid": "1700000000.000100", "from": "U123", "subject": "Standup notes",
-        "body_text": "Standup notes for today.", "attachments": [],
+        "uid": "1700000000.000100",
+        "from": "U123",
+        "subject": "Standup notes",
+        "body_text": "Standup notes for today.",
+        "attachments": [],
     }
     result = mail_ingest._ingest_message(conn, slack_message, config, channel="slack")
     assert result["thread_id"] == "mail:thread:slack:1700000000.000100"
@@ -1595,18 +1604,26 @@ def test_ingest_email_flags_urgency_and_extracts_action_items(tmp_path, monkeypa
 def test_ingest_email_action_items_accumulate_across_merges(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
+        mail_ingest,
+        "classify_email",
         lambda message, findings, categories: {
-            "category": "Placements", "new_category": True, "topic": "T", "new_topic": True,
+            "category": "Placements",
+            "new_category": True,
+            "topic": "T",
+            "new_topic": True,
         },
     )
 
     first = _email(uid="1", subject="Round 1")
     first["body_text"] = "Please submit the form by Monday."
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda message, findings, existing: {
-            "action": "new", "merge_into_id": None, "summary": "s", "body": "b",
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "s",
+            "body": "b",
         },
     )
     first_result = mail_ingest.ingest_email(conn, first, _defaults())
@@ -1614,10 +1631,13 @@ def test_ingest_email_action_items_accumulate_across_merges(tmp_path, monkeypatc
     second = _email(uid="2", subject="Round 1")
     second["body_text"] = "Please reply by Wednesday with your dietary preference."
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda message, findings, existing: {
-            "action": "merge", "merge_into_id": first_result["thread_id"],
-            "summary": "s", "body": "b",
+            "action": "merge",
+            "merge_into_id": first_result["thread_id"],
+            "summary": "s",
+            "body": "b",
         },
     )
     mail_ingest.ingest_email(conn, second, _defaults())
@@ -1652,16 +1672,23 @@ def test_ingest_message_collapses_a_duplicate_announcement_across_channels(tmp_p
         "Menu details are attached."
     )
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
+        mail_ingest,
+        "classify_email",
         lambda message, findings, categories: {
-            "category": "General College", "new_category": True,
-            "topic": subject, "new_topic": True,
+            "category": "General College",
+            "new_category": True,
+            "topic": subject,
+            "new_topic": True,
         },
     )
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda message, findings, existing: {
-            "action": "new", "merge_into_id": None, "summary": "s", "body": message["body_text"],
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "s",
+            "body": message["body_text"],
         },
     )
     gmail = _email(uid="1", subject=subject)
@@ -1673,8 +1700,11 @@ def test_ingest_message_collapses_a_duplicate_announcement_across_channels(tmp_p
 
     monkeypatch.setattr(mail_ingest, "merge_or_create_thread", _raise_if_merge_called)
     slack_message = {
-        "uid": "1700000000.000200", "from": "U1", "subject": subject,
-        "body_text": body, "attachments": [],
+        "uid": "1700000000.000200",
+        "from": "U1",
+        "subject": subject,
+        "body_text": body,
+        "attachments": [],
     }
     slack_result = mail_ingest._ingest_message(conn, slack_message, _defaults(), channel="slack")
 

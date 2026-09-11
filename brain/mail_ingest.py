@@ -401,9 +401,21 @@ def _phrase_hit(keyword: str, zone: str) -> bool:
 # not what about), so it needs its own vocabulary and no threshold tuning shared with
 # arbitrate_category's confidence floors.
 URGENCY_PHRASES = [
-    "urgent", "asap", "immediately", "deadline", "final reminder", "last date",
-    "closing soon", "action required", "time-sensitive", "time sensitive",
-    "expires today", "last chance", "respond by", "due today", "due tomorrow",
+    "urgent",
+    "asap",
+    "immediately",
+    "deadline",
+    "final reminder",
+    "last date",
+    "closing soon",
+    "action required",
+    "time-sensitive",
+    "time sensitive",
+    "expires today",
+    "last chance",
+    "respond by",
+    "due today",
+    "due tomorrow",
 ]
 
 
@@ -1233,11 +1245,7 @@ def _ingest_message(
     if merges and decision.get("merge_into_id") in valid_thread_ids:
         thread_id = decision["merge_into_id"]
         existing_thread = store.get(conn, thread_id)
-        prior_uids = (
-            existing_thread["data"].get("source_uids", [])
-            if existing_thread
-            else []
-        )
+        prior_uids = existing_thread["data"].get("source_uids", []) if existing_thread else []
         uids = sorted({*prior_uids, message["uid"]})
         title = existing_thread["title"] if existing_thread else message.get("subject", "")
         source = ",".join(f"mail:{u}" for u in uids)

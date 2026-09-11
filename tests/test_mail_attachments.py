@@ -21,7 +21,8 @@ def _make_excel(tmp_path, headers, rows):
 
 def test_extract_excel_match_finds_row(tmp_path):
     path = _make_excel(
-        tmp_path, ["Name", "Student ID", "Status"],
+        tmp_path,
+        ["Name", "Student ID", "Status"],
         [["Asha", "S123", "Selected"], ["Ravi", "S456", "Not Selected"]],
     )
     result = ma.extract_excel_match(path, "S456")
@@ -77,7 +78,8 @@ def test_process_attachment_unsupported_type(tmp_path):
 
 def test_process_attachment_pdf_non_jd(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        ma, "extract_pdf_text",
+        ma,
+        "extract_pdf_text",
         lambda path, max_chars=ma.PDF_CHAR_CAP: "Hey, see you soon.",
     )
     path = tmp_path / "note.pdf"
@@ -91,7 +93,8 @@ def test_process_attachment_keeps_job_description_text(tmp_path, monkeypatch):
     résumé feature is gone, so a JD is now just a PDF and keeps its actual content."""
     jd_text = "Responsibilities: code. Requirements: Python. Qualifications: BS."
     monkeypatch.setattr(
-        ma, "extract_pdf_text",
+        ma,
+        "extract_pdf_text",
         lambda path, max_chars=ma.PDF_CHAR_CAP: jd_text,
     )
     path = tmp_path / "jd.pdf"
@@ -220,7 +223,9 @@ def test_mailbox_status_reports_connected_for_usable_credentials(tmp_path, monke
     monkeypatch.setattr(ma_tool, "_connected_at", lambda user_id: 1757000000)
 
     assert ma_tool.mailbox_status(1) == {
-        "connected": True, "email": "me@example.com", "connected_at": 1757000000,
+        "connected": True,
+        "email": "me@example.com",
+        "connected_at": 1757000000,
     }
 
 

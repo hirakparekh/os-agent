@@ -310,9 +310,7 @@ color:#0f172a}}h1{{font-size:1.25rem;margin:0 0 .5rem}}p{{color:#475569;margin:0
 
 
 @app.get("/api/oauth/callback")
-def oauth_callback(
-    state: str = "", code: str = "", error: str = ""
-) -> Any:
+def oauth_callback(state: str = "", code: str = "", error: str = "") -> Any:
     """Where Google sends the user back after consent.
 
     Deliberately unauthenticated: it is a browser redirect from Google and cannot carry a
@@ -335,9 +333,7 @@ def oauth_callback(
             "Could not finish connecting", f"{exc} You can close this tab and try again."
         )
     label = "Gmail" if service == "gmail" else "Google Calendar"
-    return _callback_page(
-        f"{label} connected", "You can close this tab and return to Agent OS."
-    )
+    return _callback_page(f"{label} connected", "You can close this tab and return to Agent OS.")
 
 
 @app.get("/api/calendar/events")

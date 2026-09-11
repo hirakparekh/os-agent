@@ -124,8 +124,11 @@ def calendar_status(user_id: str | int | None = None) -> dict[str, Any]:
     except Exception as exc:
         return {"connected": False, "reason": f"stored credentials are unusable: {exc}"}
     if not creds or not creds.valid:
-        return {"connected": False, "reason": "stored credentials could not be refreshed",
-                "needs_reconnect": True}
+        return {
+            "connected": False,
+            "reason": "stored credentials could not be refreshed",
+            "needs_reconnect": True,
+        }
     return {"connected": True, "connected_at": _connected_at(user_id)}
 
 

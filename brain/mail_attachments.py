@@ -116,8 +116,7 @@ def scan_excel(path: Path, identifiers: list[str]) -> dict[str, Any]:
             continue
         padded = list(headers) + [""] * max(0, len(cells) - len(headers))
         labelled = {
-            h or f"col{i + 1}": c
-            for i, (h, c) in enumerate(zip(padded, cells, strict=False))
+            h or f"col{i + 1}": c for i, (h, c) in enumerate(zip(padded, cells, strict=False))
         }
         matched.append({"matched": hits, "values": labelled})
         if len(matched) >= MAX_MATCHED_ROWS:

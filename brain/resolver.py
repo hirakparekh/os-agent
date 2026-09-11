@@ -22,8 +22,8 @@ from __future__ import annotations
 import difflib
 import hashlib
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 # Fields that may carry an upstream id. The first present one is treated as the source key.
 SOURCE_ID_FIELDS = ("source_id",)
@@ -97,7 +97,8 @@ def resolve(
                 "review",
                 key,
                 best.get("id"),
-                f"possible duplicate: name {best_ratio:.0%} similar with same assignee — needs confirmation",
+                f"possible duplicate: name {best_ratio:.0%} similar with same assignee "
+                "— needs confirmation",
             )
 
     # 4. Genuinely new.

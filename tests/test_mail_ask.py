@@ -186,7 +186,8 @@ def test_prompt_includes_live_calendar_events_when_connected(monkeypatch):
     Chat runs through mail_ask, so "what meetings do I have today" only works if the live
     calendar is injected here."""
     monkeypatch.setattr(
-        mail_ask.calendar_tool, "list_upcoming_events",
+        mail_ask.calendar_tool,
+        "list_upcoming_events",
         lambda user_id, *a, **k: [
             {"start": "2026-09-12T10:00:00", "title": "Ethos online test", "location": "SJT 717"},
         ],
@@ -209,6 +210,7 @@ def test_prompt_omits_calendar_section_when_not_connected(monkeypatch):
 
 def test_prompt_omits_calendar_section_without_a_user(monkeypatch):
     """No user_id (CLI/tests) must never trigger a calendar lookup at all."""
+
     def _never(user_id, *a, **k):
         raise AssertionError("must not look up a calendar without a user_id")
 

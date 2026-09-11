@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS edges (
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def connect(
@@ -97,7 +97,10 @@ def _row_to_entity(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def _existing_for_resolver(conn: sqlite3.Connection, type_: str) -> list[dict[str, Any]]:
-    """Load confirmed nodes of one type as the flat dicts the resolver expects (name/assignee/id)."""
+    """Load confirmed nodes of one type as the flat dicts the resolver expects.
+
+    Shape is (name/assignee/id) — see brain/resolver.py.
+    """
     rows = conn.execute(
         "SELECT id, data FROM entities WHERE type = ? AND needs_review = 0", (type_,)
     ).fetchall()
@@ -155,7 +158,8 @@ def upsert(
     # row that already exists and this INSERT OR REPLACE would otherwise reset its birth date.
     conn.execute(
         "INSERT OR REPLACE INTO entities "
-        "(id, type, natural_key, title, summary, data, source, needs_review, created_at, updated_at) "
+        "(id, type, natural_key, title, summary, data, source, needs_review, "
+        "created_at, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, "
         "COALESCE((SELECT created_at FROM entities WHERE id = ?), ?), ?)",
         (res.key, type_, res.key, title, summary, payload, source, flag, res.key, now, now),
@@ -173,7 +177,8 @@ def add_edge(
 ) -> None:
     """Add a typed directed edge (idempotent on src+dst+relation)."""
     conn.execute(
-        "INSERT OR IGNORE INTO edges (src_id, dst_id, relation, data, created_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO edges (src_id, dst_id, relation, data, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
         (src_id, dst_id, relation, json.dumps(data) if data else None, _now()),
     )
     conn.commit()
