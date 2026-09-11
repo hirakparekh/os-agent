@@ -27,7 +27,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from brain import ask, calendar_tool, ingest, mail_ask, mail_ingest, profile, store
+from brain import (
+    ask,
+    calendar_tool,
+    ingest,
+    mail_ask,
+    mail_ingest,
+    mail_timeline,
+    profile,
+    store,
+)
 from brain.auth import CurrentUser
 from brain.emailtool import _load_oauth_credentials, _token_path, mailbox_status
 from brain.notify import notify
@@ -172,8 +181,14 @@ def _mail_children(conn: Any, parent_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def _mail_node(conn: Any, node: dict[str, Any]) -> dict[str, Any]:
-    children = [_mail_node(conn, c) for c in _mail_children(conn, node["id"])]
+def _mail_node(
+    conn: Any, node: dict[str, Any], category: str | None = None, topic: str | None = None
+) -> dict[str, Any]:
+    if node["type"] == "mail_category":
+        category = node["title"]
+    elif node["type"] == "mail_topic":
+        topic = node["title"]
+    children = [_mail_node(conn, c, category, topic) for c in _mail_children(conn, node["id"])]
     out: dict[str, Any] = {
         "id": node["id"],
         "name": node["title"],
@@ -187,6 +202,11 @@ def _mail_node(conn: Any, node: dict[str, Any]) -> dict[str, Any]:
         out["body"] = node["data"].get("body")
         out["source_uids"] = node["data"].get("source_uids") or []
         out["classification"] = node["data"].get("classification")
+        # Carried on the thread itself because the console's time view regroups threads by
+        # date, where the category/topic are no longer the thread's ancestors.
+        out["category"] = category
+        out["topic"] = topic
+        out.update(mail_timeline.thread_timeline(node))
     if children:
         out["children"] = children
     return out

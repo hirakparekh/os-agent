@@ -27,7 +27,7 @@ from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
-from brain import bm25, calendar_tool, profile, store
+from brain import bm25, calendar_tool, mail_timeline, profile, store
 from brain.emailtool import ATTACHMENT_CACHE
 from brain.mail_attachments import process_attachment
 from brain.openrouter import call_openrouter
@@ -460,6 +460,8 @@ def merge_or_create_thread(
         "Separately, decide whether this email describes something happening at a specific, "
         "concrete date/time — an interview, exam, meeting, deadline, competition, festival, "
         "or similar — as opposed to a vague or ongoing topic with no fixed occurrence. "
+        "Its kind is \"deadline\" when it's something the reader must do or submit by that date "
+        "(a form, fee, registration, assignment, application), otherwise \"event\". "
         f"REFERENCE DATE (when this email was sent, for resolving 'tomorrow'/'this Friday'): "
         f"{_reference_date(email)}.\n\n"
         f"EXISTING NODES IN THIS TOPIC:\n{thread_lines}\n\n"
@@ -469,7 +471,8 @@ def merge_or_create_thread(
         "Reply with ONLY this JSON object, nothing else:\n"
         '{"action": "merge"|"new", "merge_into_id": "<id or null>", '
         '"summary": "<routing digest, <=120 words>", "body": "<full content>", '
-        '"event": {"has_event": true|false, "title": "<short event title, or empty>", '
+        '"event": {"has_event": true|false, "kind": "deadline"|"event", '
+        '"title": "<short event title, or empty>", '
         '"start": "<YYYY-MM-DD, or YYYY-MM-DDTHH:MM:SS if a specific time is given; '
         'empty if has_event is false>", '
         '"end": "<same format, or empty to default to start + 1 hour>", '
@@ -881,6 +884,20 @@ def ingest_email(
         )
     calendar_events = [*prior_calendar_events, *([created_event] if created_event else [])]
 
+    # A thread from before dates were recorded gets its earlier emails stamped with the row's
+    # created_at, so first_received stays roughly right instead of jumping to this email.
+    prior_received = (existing_thread or {}).get("data", {}).get("received_at")
+    if prior_received is None and existing_thread and existing_thread.get("created_at"):
+        prior_received = {
+            u: existing_thread["created_at"]
+            for u in existing_thread["data"].get("source_uids", [])
+        }
+    received_at = mail_timeline.merge_received(prior_received, email["uid"], email.get("date"))
+    events = mail_timeline.merge_events(
+        mail_timeline.thread_timeline(existing_thread)["events"] if existing_thread else [],
+        mail_timeline.normalize_event(decision.get("event"), email["uid"]),
+    )
+
     store.upsert(
         conn,
         "mail_thread",
@@ -899,6 +916,9 @@ def ingest_email(
             # Google Calendar events auto-created from this thread's emails — kept so a repeat
             # ingest doesn't double-book, and so the UI's Undo can find the event id later.
             "calendar_events": calendar_events,
+            # When each email arrived, and the dates they mention — see brain/mail_timeline.py.
+            "received_at": received_at,
+            "events": events,
             # Provenance for the UI and for debugging a wrong call: what each half of the
             # classifier thought, and how sure the combination was.
             "classification": {

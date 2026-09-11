@@ -13,10 +13,10 @@ MailChat UI, which has no "sources" affordance today.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
-from brain import bm25, profile, store
+from brain import bm25, mail_timeline, profile, store
 from brain.openrouter import call_openrouter
 
 TOP_K = 8  # tunable: how many full thread bodies to include, see module docstring
@@ -35,7 +35,16 @@ about whether an attachment mentions the user, trust the attachment finding.
 
 A TODAY line gives the current real-world date. Use it to resolve relative time questions
 ("today", "this week", "how many days until the deadline", "is this overdue") — never guess
-today's date from anything else."""
+today's date from anything else.
+
+Each overview line shows when that thread's mail was received ("~" means approximate) — use it
+for questions about when something arrived ("what came in last week"). DATED ITEMS lists the
+deadlines and events found in the mail, already marked OVERDUE / SOON / UPCOMING / PAST relative
+to TODAY — use it for "what's due", "what's coming up" and "what did I miss" questions."""
+
+# Dated items shown to the model: everything overdue or upcoming, capped so a mailbox full of
+# far-future events can't crowd out the actual mail context.
+MAX_DATED_ITEMS = 20
 
 
 def _walk_tree(conn: Any) -> list[tuple[str, str, dict[str, Any]]]:
@@ -109,6 +118,18 @@ def _overview_attachment_note(thread: dict[str, Any]) -> str:
     return f" [{len(findings)} attachment(s); does not name the user]"
 
 
+def _received_note(thread: dict[str, Any]) -> str:
+    timeline = mail_timeline.thread_timeline(thread)
+    last = timeline["last_received"]
+    if not last:
+        return ""
+    approx = "~" if timeline["received_estimated"] else ""
+    first = timeline["first_received"]
+    if first and first[:10] != last[:10]:
+        return f" (received {approx}{first[:10]} to {approx}{last[:10]})"
+    return f" (received {approx}{last[:10]})"
+
+
 def _format_overview(rows: list[tuple[str, str, dict[str, Any]]]) -> str:
     lines = []
     for cat, topic, thread in rows:
@@ -118,8 +139,39 @@ def _format_overview(rows: list[tuple[str, str, dict[str, Any]]]) -> str:
         # "not listed" about a shortlist the line said named the user.
         note = _overview_attachment_note(thread)
         prefix = f"{note} " if note else ""
-        lines.append(f"  {prefix}[{cat} > {topic}] {thread['title']} — {summary}")
+        received = _received_note(thread)
+        lines.append(f"  {prefix}[{cat} > {topic}] {thread['title']}{received} — {summary}")
     return "\n".join(lines)
+
+
+def _format_dated_items(rows: list[tuple[str, str, dict[str, Any]]], today: date) -> str:
+    """Every overdue or upcoming event across the mailbox, soonest first.
+
+    The overview's one-liners and the BM25-expanded bodies can't answer "what's due this week":
+    that question shares no words with the emails it's about, so ranking never surfaces them.
+    """
+    items: list[tuple[int, str]] = []
+    for cat, topic, thread in rows:
+        for event in mail_timeline.thread_timeline(thread)["events"]:
+            status = mail_timeline.thread_status({"events": [event]}, today)
+            days = status["days"]
+            if status["status"] == "past" and days is not None and days < -1:
+                continue
+            unit = "day" if abs(days) == 1 else "days"
+            when = (
+                "today" if days == 0 else f"in {days} {unit}" if days > 0 else f"{-days} {unit} ago"
+            )
+            kind = "DEADLINE" if event.get("kind") == "deadline" else "EVENT"
+            items.append(
+                (
+                    days,
+                    f"  {status['status'].upper()} {kind} {event['start'][:16]} ({when}): "
+                    f"{event['title']} — from \"{thread['title']}\" [{cat} > {topic}]",
+                )
+            )
+    items.sort(key=lambda item: item[0])
+    lines = [line for _, line in items[:MAX_DATED_ITEMS]]
+    return "\n".join(lines) or "(no dated items found in the mail)"
 
 
 def _format_attachments(thread: dict[str, Any]) -> str:
@@ -150,7 +202,7 @@ def _format_full_thread(cat: str, topic: str, thread: dict[str, Any]) -> str:
     # stale — one here read "attachments indicate the sender was not listed" for a spreadsheet
     # that does name the user — so the scanned facts must be read first, not last.
     return (
-        f"### {thread['title']}  [{cat} > {topic}]"
+        f"### {thread['title']}  [{cat} > {topic}]{_received_note(thread)}"
         f"{_format_attachments(thread)}\n"
         f"Summary: {thread.get('summary') or '(none)'}\n"
         f"Body:\n{body}"
@@ -175,10 +227,12 @@ def build_prompt(
     )
     # Not named `profile`: that would shadow the imported brain.profile module.
     profile_block = _format_profile(profile_details)
-    today = datetime.now().strftime("%A, %Y-%m-%d")
+    now = datetime.now()
+    dated = _format_dated_items(rows, now.date())
     return (
         f"{SYSTEM}\n\n"
-        f"=== TODAY ===\n{today}\n\n"
+        f"=== TODAY ===\n{now.strftime('%A, %Y-%m-%d')}\n\n"
+        f"=== DATED ITEMS (deadlines and events, soonest first) ===\n{dated}\n\n"
         f"=== MAIL OVERVIEW (every thread, one line each) ===\n{overview}\n\n"
         f"=== RELEVANT THREADS IN FULL ===\n{full}\n\n"
         f"=== ABOUT THE PERSON ASKING (optional context) ===\n{profile_block}\n\n"

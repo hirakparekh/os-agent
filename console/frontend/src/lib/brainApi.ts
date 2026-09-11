@@ -27,10 +27,22 @@ export interface MailClassification {
   auto_category?: string | null
 }
 
+/** A dated thing an email describes — see brain/mail_timeline.py. */
+export interface MailEvent {
+  title: string
+  /** "YYYY-MM-DD" or an ISO datetime, as written in the mail. */
+  start: string
+  end?: string | null
+  kind: "deadline" | "event"
+  location?: string | null
+  source_uid?: string | null
+}
+
 export interface MailNode {
   id: string
   name: string
-  type: "root" | "mail_category" | "mail_topic" | "mail_thread"
+  /** "time_bucket" only exists client-side: the time view's Overdue / This week / … groups. */
+  type: "root" | "mail_category" | "mail_topic" | "mail_thread" | "time_bucket"
   summary?: string | null
   body?: string | null
   source_uids?: string[]
@@ -38,6 +50,15 @@ export interface MailNode {
   // filing is findable instead of silently wrong.
   needs_review?: boolean
   classification?: MailClassification | null
+  // Thread-only. Category/topic ride on the thread because the time view regroups threads by
+  // date, where they are no longer its ancestors.
+  category?: string | null
+  topic?: string | null
+  first_received?: string | null
+  last_received?: string | null
+  /** The received dates were approximated from when the thread was stored (older threads). */
+  received_estimated?: boolean
+  events?: MailEvent[]
   children?: MailNode[]
 }
 

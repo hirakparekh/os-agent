@@ -57,6 +57,11 @@ export function Chat({
   // the bump is stale by the time it resolves, and applying it would wipe an optimistically
   // rendered message the user just sent.
   const loadSeq = useRef(0)
+  // Set by the seed effect below when a fresh conversation starts before the initial session
+  // list has loaded. Without it, that fetch resolving afterward would win the race and silently
+  // jump back to the most recent past chat, right out from under the seeded question.
+  const suppressAutoSelectRef = useRef(false)
+  const [creatingChat, setCreatingChat] = useState(false)
   // A transcript is appended to whatever is already typed, never auto-sent — speech
   // recognition errors should be fixable before they cost an LLM call.
   const voice = useVoice({
@@ -70,7 +75,7 @@ export function Chat({
       .then((list) => {
         if (cancelled) return
         setSessions(list)
-        if (list.length > 0) setActiveId(list[0].id)
+        if (list.length > 0 && !suppressAutoSelectRef.current) setActiveId(list[0].id)
       })
       .catch(() => {
         if (!cancelled) setError("Couldn't load your past chats.")
@@ -114,6 +119,7 @@ export function Chat({
   // deliberately not auto-sent, so it can be reworded before spending an LLM call.
   useEffect(() => {
     if (!seed) return
+    suppressAutoSelectRef.current = true
     setActiveId(null)
     setMessages([])
     setInput(seed)
@@ -133,6 +139,10 @@ export function Chat({
     // The active session is already an unused blank one — don't pile up another empty
     // "New chat" row in the history for every click.
     if (activeId !== null && messages.length === 0 && !messagesLoading) return
+    // A second click before the first's create-session call returns must not start a second
+    // one — neither guard above catches it, since activeId/messages haven't updated yet.
+    if (creatingChat) return
+    setCreatingChat(true)
     try {
       const session = await createChatSession()
       setSessions((prev) => [session, ...prev])
@@ -140,6 +150,8 @@ export function Chat({
       setMessages([])
     } catch {
       setError("Couldn't start a new chat.")
+    } finally {
+      setCreatingChat(false)
     }
   }
 
@@ -233,7 +245,8 @@ export function Chat({
           <button
             type="button"
             onClick={handleNewChat}
-            className="flex w-full items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+            disabled={creatingChat}
+            className="flex w-full items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-60"
           >
             <MessageSquarePlus className="h-4 w-4" />
             New chat

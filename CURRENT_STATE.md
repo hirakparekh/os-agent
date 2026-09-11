@@ -80,7 +80,16 @@ into full text" (`brain/mail_ask.py`) — both bounded by prompt size, not seman
    back into future scoring per-user, so corrections compound instead of being one-off.
 5. **Attachments**: local Excel/PDF parsing (`mail_attachments.py`), OCR for scanned content,
    findings merged into thread data and treated as authoritative over the thread summary.
-6. **Review queue**: low-confidence classifications set `needs_review`, surfaced via
+6. **Dates** (`brain/mail_timeline.py`): each thread stores `received_at` (every source email's
+   own Date header, keyed by uid — no LLM) and `events` (deadlines/events the existing
+   merge/place LLM call already extracts, now kept even when Calendar isn't connected, each
+   tagged `deadline` or `event`). Dates are thread *attributes*, never a tree level — the
+   console's "By time" view regroups the same thread nodes client-side. Threads from before this
+   fall back to `created_at` (marked approximate) and any recorded calendar events, so no
+   migration was needed. Urgency (overdue / due within 3 days / upcoming) is derived from today
+   on every read, never stored. Mail Q&A gets each thread's received date plus a DATED ITEMS
+   block, so "what's due this week" works even though it shares no words with the emails.
+7. **Review queue**: low-confidence classifications set `needs_review`, surfaced via
    `GET /api/mail/review` and `MailReviewQueue.tsx`. `POST /api/mail/reclassify` moves a
    thread to a different category/topic (creating the destination if needed), clears the flag,
    and `prune_empty_mail_nodes` removes any category/topic left with no children.
@@ -92,7 +101,7 @@ into full text" (`brain/mail_ask.py`) — both bounded by prompt size, not seman
 | `GET /api/data` | full entity graph (résumé/meeting side) |
 | `POST /api/ask` | Q&A over the person/task/meeting graph (`brain/ask.py`) |
 | `POST /api/ingest_resume` | ingest a résumé/meeting transcript |
-| `GET /api/mail_tree` | category → topic → thread tree for the mindmap UI |
+| `GET /api/mail_tree` | category → topic → thread tree for the mindmap UI; thread nodes also carry `category`, `topic`, `first_received`, `last_received`, `received_estimated`, `events` |
 | `POST /api/mail/reload`, `/reload/stream` | re-run ingest (streaming variant reports progress) |
 | `GET /api/mail/status`, `POST /connect`, `POST /disconnect` | Gmail OAuth lifecycle |
 | `POST /api/mail/ask` | Q&A over the mail tree (`brain/mail_ask.py`) |
@@ -116,7 +125,9 @@ into full text" (`brain/mail_ask.py`) — both bounded by prompt size, not seman
 Pages: `Login`, `Home` (mail-first dashboard + mindmap entry), `Chat`, `Applications`
 (onboarding/roster), `Profile`. No router — navigation is component state, so there is no
 deep-linking. Key components: `MailMindmap` (D3 tree, reclassify control inline against
-`--mm-*` CSS vars since the panel is dark against an otherwise light/Tailwind app),
+`--mm-*` CSS vars since the panel is dark against an otherwise light/Tailwind app; a
+"By topic / By time" switch — time view groups by Upcoming deadline or Received date — plus
+filter chips, search, per-category colours and urgency outlines, all in `lib/mailTimeline.ts`),
 `MailReviewQueue`, `MailIngestProgress`, `ChatThread`. Demo mode: if
 `VITE_API_BASE_URL` is unset at build time the app runs against fake local data instead of a
 backend — a Vite-inlined constant, not runtime-configurable.
