@@ -856,9 +856,30 @@ def _create_calendar_event_for_thread(
 def ingest_email(
     conn: Any, email: dict[str, Any], config: dict[str, Any], user_id: str | int | None = None
 ) -> dict[str, Any]:
-    """Full per-email pipeline: attachments -> classify -> merge/place -> store.
+    """Ingest one Gmail message. Thin adapter over `_ingest_message` — see that function for
+    the actual pipeline, which is channel-agnostic (Slack messages ride the same code, see
+    brain/slack_ingest.py)."""
+    return _ingest_message(conn, email, config, user_id, channel="gmail")
 
-    No mark-read here.
+
+def _ingest_message(
+    conn: Any,
+    message: dict[str, Any],
+    config: dict[str, Any],
+    user_id: str | int | None = None,
+    *,
+    channel: str = "gmail",
+) -> dict[str, Any]:
+    """Full per-message pipeline: attachments -> classify -> merge/place -> store.
+
+    `message` is channel-agnostic: `{uid, from, subject, body_text, date, attachments}`.
+    Nothing below branches on where it came from — classification, merging, and topic
+    assignment all key off the same category/topic vocabulary regardless of `channel`, which
+    is precisely what lets a Slack message and a Gmail thread about the same subject land
+    under the same topic node (existing_threads below is queried by topic membership only,
+    with no channel filter).
+
+    No mark-read here — that's channel-specific and stays the caller's job.
     """
     # Attachment identifiers come from the user's stored profile ("About you"), so adding your
     # name there is enough — no config file to edit. Anything in config is kept as a fallback.
@@ -873,7 +894,7 @@ def ingest_email(
         },
     )
     offline = bool(config.get("offline_mode"))
-    findings = gather_attachment_findings(email, config)
+    findings = gather_attachment_findings(message, config)
 
     stored_categories = store.all_of_type(conn, "mail_category")
     seeded_names = {c["title"] for c in stored_categories}
@@ -884,22 +905,22 @@ def ingest_email(
     ]
     # Offline mode skips the LLM call entirely — arbitrate_category already tolerates a blank
     # llm_category (falls back to the top keyword score, or "low" confidence with none).
-    classification = {} if offline else classify_email(email, findings, categories)
+    classification = {} if offline else classify_email(message, findings, categories)
 
-    subject = email.get("subject", "") or ""
+    subject = message.get("subject", "") or ""
     llm_category = (classification.get("category") or "").strip()
     # Fold in whatever this user has taught the classifier by correcting past mail.
     ranked = score_categories(
         subject,
-        email.get("body_text", "") or "",
-        email.get("from", "") or "",
+        message.get("body_text", "") or "",
+        message.get("from", "") or "",
         config_with_learned(conn, config),
     )
     cat_title, confidence = arbitrate_category(
         llm_category,
         ranked,
         {c["title"] for c in categories},
-        sender_category=sender_precedent(conn, email.get("from", "") or ""),
+        sender_category=sender_precedent(conn, message.get("from", "") or ""),
     )
     classification["category"] = cat_title
 
@@ -912,6 +933,8 @@ def ingest_email(
     classification["topic"] = topic_title
     topic_id = ensure_topic(conn, cat_title, topic_title)
 
+    # No channel filter here — this is what lets a Slack message and a Gmail thread about the
+    # same subject land in the same merge-candidate pool (see the docstring above).
     existing_threads = [
         t
         for t in store.all_of_type(conn, "mail_thread")
@@ -921,9 +944,9 @@ def ingest_email(
         )
     ]
     decision = (
-        _offline_merge_or_create_thread(email, existing_threads)
+        _offline_merge_or_create_thread(message, existing_threads)
         if offline
-        else merge_or_create_thread(email, findings, existing_threads)
+        else merge_or_create_thread(message, findings, existing_threads)
     )
 
     # Validate against every real thread, not just this topic's existing_threads: a merge target
@@ -937,18 +960,24 @@ def ingest_email(
             if existing_thread
             else []
         )
-        uids = sorted({*prior_uids, email["uid"]})
-        title = existing_thread["title"] if existing_thread else email.get("subject", "")
+        uids = sorted({*prior_uids, message["uid"]})
+        title = existing_thread["title"] if existing_thread else message.get("subject", "")
         source = ",".join(f"mail:{u}" for u in uids)
     else:
         existing_thread = None
-        thread_id = f"mail:thread:{email['uid']}"
-        uids = [email["uid"]]
-        title = email.get("subject", "")
-        source = f"mail:{email['uid']}"
+        # Gmail keeps its historical id shape (untouched, so existing data/tests still match);
+        # every other channel is namespaced to avoid a uid collision across channels.
+        thread_id = (
+            f"mail:thread:{message['uid']}"
+            if channel == "gmail"
+            else f"mail:thread:{channel}:{message['uid']}"
+        )
+        uids = [message["uid"]]
+        title = message.get("subject", "")
+        source = f"mail:{message['uid']}"
 
     # A thread the user has re-filed by hand stays where they put it. Without this, the next
-    # email in that thread is scored afresh and reparent_thread drags the whole thread back —
+    # message in that thread is scored afresh and reparent_thread drags the whole thread back —
     # silently undoing the correction.
     prior = (existing_thread or {}).get("data", {}).get("classification") or {}
     if prior.get("corrected_by_user") and prior.get("category"):
@@ -961,12 +990,12 @@ def ingest_email(
         classification["topic"] = topic_title
 
     prior_calendar_events = (existing_thread or {}).get("data", {}).get("calendar_events", [])
-    # Guard against double-booking the same email (e.g. a retried ingest after a mark-read
+    # Guard against double-booking the same message (e.g. a retried ingest after a mark-read
     # failure on the previous attempt) — never a new API call for a uid already handled.
     created_event = None
-    if not any(e.get("source_uid") == email["uid"] for e in prior_calendar_events):
+    if not any(e.get("source_uid") == message["uid"] for e in prior_calendar_events):
         created_event = _create_calendar_event_for_thread(
-            decision.get("event") or {}, email["uid"], user_id
+            decision.get("event") or {}, message["uid"], user_id
         )
     calendar_events = [*prior_calendar_events, *([created_event] if created_event else [])]
 
@@ -978,15 +1007,19 @@ def ingest_email(
             "title": title,
             "body": decision["body"],
             "source_uids": uids,
+            # Which channel this thread's most recent message arrived on — a thread that's
+            # merged across channels keeps whichever channel ingested last, which is fine
+            # since it's display metadata (a badge), not used for any routing decision.
+            "channel": channel,
             # Kept so later mail from the same sender can be filed consistently
             # (see sender_precedent).
-            "sender": email.get("from", "") or "",
+            "sender": message.get("from", "") or "",
             # Attachment findings used to be handed to the ingest-time prompts and thrown
             # away, so nothing downstream could answer "was I named in that spreadsheet?".
             # Persisting them is what makes attachments visible to mail Q&A.
             "attachments": _merge_attachments(existing_thread, findings),
-            # Google Calendar events auto-created from this thread's emails — kept so a repeat
-            # ingest doesn't double-book, and so the UI's Undo can find the event id later.
+            # Google Calendar events auto-created from this thread's messages — kept so a
+            # repeat ingest doesn't double-book, and so the UI's Undo can find the event id.
             "calendar_events": calendar_events,
             # Provenance for the UI and for debugging a wrong call: what each half of the
             # classifier thought, and how sure the combination was.
@@ -996,7 +1029,7 @@ def ingest_email(
                 "llm_category": llm_category or None,
                 "keyword_category": ranked[0][0] if ranked else None,
                 "scores": {name: round(score, 2) for name, score in ranked[:3]},
-                # Carried forward so the pin survives every later email in this thread.
+                # Carried forward so the pin survives every later message in this thread.
                 **(
                     {"corrected_by_user": True, "auto_category": prior.get("auto_category")}
                     if prior.get("corrected_by_user")
@@ -1013,12 +1046,13 @@ def ingest_email(
     store.add_edge(conn, topic_id, thread_id, "contains")
 
     return {
-        "uid": email["uid"],
+        "uid": message["uid"],
         "category": cat_title,
         "topic": topic_title,
         "thread_id": thread_id,
         "action": decision["action"],
         "confidence": confidence,
+        "channel": channel,
         "calendar_event": {**created_event, "thread_id": thread_id} if created_event else None,
     }
 

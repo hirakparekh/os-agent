@@ -1342,3 +1342,52 @@ def test_set_offline_mode_persists_and_overrides_file_config(tmp_path):
 
     merged = mail_ingest.config_with_settings(conn, {"offline_mode": False, "other": 1})
     assert merged == {"offline_mode": True, "other": 1}
+
+
+def test_ingest_message_is_channel_agnostic_and_merges_across_channels(tmp_path, monkeypatch):
+    """The architectural claim behind cross-channel topic merging: a Slack message and a Gmail
+    message about the same subject, in the same topic, are eligible to merge into one thread —
+    ingest_message has no channel filter on its merge-candidate query."""
+    conn = _conn(tmp_path)
+    subject = "Accenture Off-Campus Drive - interview shortlisted"
+    monkeypatch.setattr(
+        mail_ingest, "classify_email",
+        lambda message, findings, categories: {
+            "category": "Placements", "new_category": True, "topic": subject, "new_topic": True,
+        },
+    )
+    monkeypatch.setattr(
+        mail_ingest, "merge_or_create_thread",
+        lambda message, findings, existing: (
+            {"action": "merge", "merge_into_id": existing[0]["id"], "summary": "s", "body": "b"}
+            if existing
+            else {"action": "new", "merge_into_id": None, "summary": "s", "body": "b"}
+        ),
+    )
+
+    gmail_result = mail_ingest._ingest_message(
+        conn, _email(uid="1", subject=subject), _defaults(), channel="gmail"
+    )
+    slack_message = {
+        "uid": "1700000000.000100", "from": "U123", "subject": subject,
+        "body_text": "Same subject, different channel.", "attachments": [],
+    }
+    slack_result = mail_ingest._ingest_message(
+        conn, slack_message, _defaults(), channel="slack"
+    )
+
+    assert slack_result["thread_id"] == gmail_result["thread_id"]
+    thread = store.get(conn, gmail_result["thread_id"])
+    assert thread["data"]["source_uids"] == ["1", "1700000000.000100"]
+    assert thread["data"]["channel"] == "slack"  # last writer wins, by design
+
+
+def test_ingest_message_namespaces_thread_ids_for_non_gmail_channels(tmp_path):
+    conn = _conn(tmp_path)
+    config = {**_defaults(), "offline_mode": True}
+    slack_message = {
+        "uid": "1700000000.000100", "from": "U123", "subject": "Standup notes",
+        "body_text": "Standup notes for today.", "attachments": [],
+    }
+    result = mail_ingest._ingest_message(conn, slack_message, config, channel="slack")
+    assert result["thread_id"] == "mail:thread:slack:1700000000.000100"
