@@ -57,10 +57,25 @@ def seed(user_id: str) -> None:
     conn.execute("DELETE FROM edges")
     conn.commit()
 
+    now = datetime.now().astimezone()
+    today = now.date()
+
     def thread(
-        topic_id: str, uid: str, title: str, summary: str, body: str, *, needs_review: bool = False
+        topic_id: str,
+        uid: str,
+        title: str,
+        summary: str,
+        body: str,
+        *,
+        needs_review: bool = False,
+        received_ago: timedelta,
+        event: dict[str, str] | None = None,
     ) -> None:
         thread_id = f"mail:thread:{uid}"
+        # Relative to today, so the time view's Overdue / This week / Next week buckets and the
+        # "new" marker are deterministic whenever the suite runs.
+        received = (now - received_ago).isoformat(timespec="seconds")
+        events = [{**event, "end": None, "location": None, "source_uid": uid}] if event else []
         store.upsert(
             conn,
             "mail_thread",
@@ -69,6 +84,8 @@ def seed(user_id: str) -> None:
                 "title": title,
                 "body": body,
                 "source_uids": [uid],
+                "received_at": {uid: received},
+                "events": events,
                 "classification": {
                     "category": topic_id.split(":")[2],
                     "confidence": "low" if needs_review else "high",
@@ -90,6 +107,12 @@ def seed(user_id: str) -> None:
         "Accenture Off-Campus Drive 2026",
         "Off-campus drive, eligibility 7 CGPA.",
         "Eligibility criteria: 7 CGPA. CTC 6 LPA. Shortlisted students get an interview.",
+        received_ago=timedelta(hours=3),
+        event={
+            "title": "Online assessment",
+            "start": (today + timedelta(days=2)).isoformat(),
+            "kind": "deadline",
+        },
     )
 
     # Wrongly filed under Placements, exactly as the reported bug produced. The reclassify spec
@@ -102,6 +125,12 @@ def seed(user_id: str) -> None:
         "Inter-department yoga competition on 12 March.",
         "The Training and Placement Cell is organising a Yoga Competition on 12 March 2026.",
         needs_review=True,
+        received_ago=timedelta(days=2),
+        event={
+            "title": "Yoga Competition",
+            "start": (today + timedelta(days=10)).isoformat(),
+            "kind": "event",
+        },
     )
 
     lectures = mail_ingest.ensure_topic(conn, "Lectures & Profs", "Compilers")
@@ -111,6 +140,12 @@ def seed(user_id: str) -> None:
         "Guest Lecture on Compilers",
         "Guest lecture by a visiting professor.",
         "A guest lecture on compiler design will be held in the seminar hall.",
+        received_ago=timedelta(days=40),
+        event={
+            "title": "Assignment submission",
+            "start": (today - timedelta(days=4)).isoformat(),
+            "kind": "deadline",
+        },
     )
 
     conn.close()

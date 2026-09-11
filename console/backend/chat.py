@@ -149,9 +149,7 @@ def post_message(
     except httpx.HTTPError as exc:
         # Don't persist a broken assistant turn — the user message stays (it was really
         # asked), but a retry shouldn't leave a permanently-wrong answer in history.
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY, f"Couldn't get an answer: {exc}"
-        ) from exc
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Couldn't get an answer: {exc}") from exc
 
     if session.title is None:
         session.title = question[:_TITLE_MAX_LEN]

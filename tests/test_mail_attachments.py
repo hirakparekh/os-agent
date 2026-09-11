@@ -21,7 +21,8 @@ def _make_excel(tmp_path, headers, rows):
 
 def test_extract_excel_match_finds_row(tmp_path):
     path = _make_excel(
-        tmp_path, ["Name", "Student ID", "Status"],
+        tmp_path,
+        ["Name", "Student ID", "Status"],
         [["Asha", "S123", "Selected"], ["Ravi", "S456", "Not Selected"]],
     )
     result = ma.extract_excel_match(path, "S456")
@@ -41,15 +42,6 @@ def test_extract_excel_match_no_id_column_returns_none(tmp_path):
     assert ma.extract_excel_match(path, "S123") is None
 
 
-def test_looks_like_job_description_true_for_jd_text():
-    text = "Responsibilities: build stuff. Requirements: Python. Qualifications: CS degree."
-    assert ma.looks_like_job_description(text)
-
-
-def test_looks_like_job_description_false_for_plain_text():
-    assert not ma.looks_like_job_description("Hey, lunch at noon?")
-
-
 def test_extract_pdf_text_caps_length(monkeypatch):
     class FakePage:
         def extract_text(self):
@@ -62,20 +54,6 @@ def test_extract_pdf_text_caps_length(monkeypatch):
     monkeypatch.setattr("pypdf.PdfReader", FakeReader)
     text = ma.extract_pdf_text(Path("fake.pdf"), max_chars=100)
     assert len(text) == 100
-
-
-def test_match_resume_to_jd_calls_openrouter(monkeypatch):
-    captured = {}
-
-    def fake_call(prompt):
-        captured["prompt"] = prompt
-        return "Good match on Python."
-
-    monkeypatch.setattr(ma, "call_openrouter", fake_call)
-    profile = {"skills": ["Python"], "summary": "backend eng"}
-    note = ma.match_resume_to_jd("Need Python dev", profile)
-    assert note == "Good match on Python."
-    assert "Python" in captured["prompt"]
 
 
 def test_process_attachment_excel_dispatch(tmp_path):
@@ -100,7 +78,8 @@ def test_process_attachment_unsupported_type(tmp_path):
 
 def test_process_attachment_pdf_non_jd(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        ma, "extract_pdf_text",
+        ma,
+        "extract_pdf_text",
         lambda path, max_chars=ma.PDF_CHAR_CAP: "Hey, see you soon.",
     )
     path = tmp_path / "note.pdf"
@@ -109,21 +88,20 @@ def test_process_attachment_pdf_non_jd(tmp_path, monkeypatch):
     assert result["kind"] == "pdf"
 
 
-def test_process_attachment_pdf_jd_with_resume(tmp_path, monkeypatch):
+def test_process_attachment_keeps_job_description_text(tmp_path, monkeypatch):
+    """A JD PDF used to have its text thrown away and replaced by a résumé-match note. The
+    résumé feature is gone, so a JD is now just a PDF and keeps its actual content."""
     jd_text = "Responsibilities: code. Requirements: Python. Qualifications: BS."
     monkeypatch.setattr(
-        ma, "extract_pdf_text",
+        ma,
+        "extract_pdf_text",
         lambda path, max_chars=ma.PDF_CHAR_CAP: jd_text,
     )
-    monkeypatch.setattr(ma, "match_resume_to_jd", lambda jd, profile: "matches well")
     path = tmp_path / "jd.pdf"
     path.write_bytes(b"%PDF-1.4")
-    result = ma.process_attachment(path, {"resume_profile": {"skills": ["Python"]}})
-    assert result == {
-        "file": "jd.pdf", "kind": "pdf_jd", "finding": "matches well",
-        # A JD's raw text is replaced by the match note, so identifier hits ride separately.
-        "mentions_you": [],
-    }
+    result = ma.process_attachment(path, {})
+    assert result["kind"] == "pdf"
+    assert result["finding"] == jd_text
 
 
 # --- Identifier matching in attachments -------------------------------------------------
@@ -240,10 +218,15 @@ def test_mailbox_status_reports_connected_for_usable_credentials(tmp_path, monke
     class _Creds:
         valid = True
 
-    monkeypatch.setattr(ma_tool, "_load_oauth_credentials", lambda interactive, user_id: _Creds())
+    monkeypatch.setattr(ma_tool, "_load_oauth_credentials", lambda user_id: _Creds())
     monkeypatch.setattr(ma_tool, "_mailbox_email", lambda user_id: "me@example.com")
+    monkeypatch.setattr(ma_tool, "_connected_at", lambda user_id: 1757000000)
 
-    assert ma_tool.mailbox_status(1) == {"connected": True, "email": "me@example.com"}
+    assert ma_tool.mailbox_status(1) == {
+        "connected": True,
+        "email": "me@example.com",
+        "connected_at": 1757000000,
+    }
 
 
 def test_mailbox_status_reports_disconnected_when_refresh_fails(tmp_path, monkeypatch):
@@ -251,13 +234,30 @@ def test_mailbox_status_reports_disconnected_when_refresh_fails(tmp_path, monkey
     token.write_text("{}", encoding="utf-8")
     monkeypatch.setenv("GMAIL_TOKEN_PATH", str(token))
 
-    def _boom(interactive, user_id):
+    def _boom(user_id):
         raise RuntimeError("invalid_scope")
 
     monkeypatch.setattr(ma_tool, "_load_oauth_credentials", _boom)
     status = ma_tool.mailbox_status(1)
     assert status["connected"] is False
     assert "invalid_scope" in status["reason"]
+
+
+def test_mailbox_status_flags_an_expired_grant_as_needing_reconnect(tmp_path, monkeypatch):
+    """The weekly refresh-token expiry is routine here, so it must be distinguishable from a
+    genuine fault — the UI renders it as "Reconnect", not as an error."""
+    token = tmp_path / "token.json"
+    token.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("GMAIL_TOKEN_PATH", str(token))
+
+    def _expired(user_id):
+        raise ma_tool.ReconnectRequired("Gmail access expired or was revoked — reconnect Gmail.")
+
+    monkeypatch.setattr(ma_tool, "_load_oauth_credentials", _expired)
+    status = ma_tool.mailbox_status(1)
+    assert status["connected"] is False
+    assert status["needs_reconnect"] is True
+    assert "reconnect" in status["reason"].lower()
 
 
 # --- CSV / DOCX / image attachments must not be dead ends --------------------------------

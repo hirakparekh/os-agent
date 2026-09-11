@@ -1,19 +1,25 @@
-import { CalendarPlus, Loader2, Mail, MailX, Map, PlugZap, RefreshCw, Activity, ArrowUpRight, Undo2, Zap } from "lucide-react"
-import { useState } from "react"
+import { CalendarPlus, Loader2, Mail, MailX, Map, MessageSquare, PlugZap, RefreshCw, Activity, ArrowUpRight, Undo2, Zap } from "lucide-react"
+import { useEffect, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 
 import type { View } from "@/App"
+import { ActionItemsPanel } from "@/components/ActionItemsPanel"
 import { MailIngestProgress } from "@/components/MailIngestProgress"
 import { MailMindmap } from "@/components/MailMindmap"
 import { MailReviewQueue } from "@/components/MailReviewQueue"
+import { NeedsAttentionPanel } from "@/components/NeedsAttentionPanel"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import {
   type CreatedCalendarEvent,
   type MailNode,
   type MailProgress,
   getMailTree,
+  getSlackIngestStatus,
   reloadMailStream,
+  reloadSlackStream,
+  setSlackChannel,
   undoCalendarEvent,
 } from "@/lib/brainApi"
 
@@ -182,6 +188,54 @@ function MailPanel({ onAskAbout }: { onAskAbout: (question: string) => void }) {
 
   const [reviewKey, setReviewKey] = useState(0)
 
+  const [slackChannelId, setSlackChannelId] = useState("")
+  const [slackConfigured, setSlackConfigured] = useState(false)
+  const [slackChannelInput, setSlackChannelInput] = useState("")
+  const [slackSyncing, setSlackSyncing] = useState(false)
+  const [slackResult, setSlackResult] = useState<string | null>(null)
+  const [slackError, setSlackError] = useState<string | null>(null)
+
+  useEffect(() => {
+    getSlackIngestStatus()
+      .then((s) => {
+        setSlackConfigured(s.connected)
+        setSlackChannelId(s.channel_id ?? "")
+        setSlackChannelInput(s.channel_id ?? "")
+      })
+      .catch(() => setSlackConfigured(false))
+  }, [])
+
+  async function saveSlackChannel() {
+    setSlackError(null)
+    try {
+      await setSlackChannel(slackChannelInput.trim())
+      const status = await getSlackIngestStatus()
+      setSlackConfigured(status.connected)
+      setSlackChannelId(status.channel_id ?? "")
+    } catch (err) {
+      setSlackError(err instanceof Error ? err.message : "Couldn't save the Slack channel.")
+    }
+  }
+
+  async function handleSlackSync() {
+    setSlackSyncing(true)
+    setSlackError(null)
+    setSlackResult(null)
+    try {
+      const events = await reloadSlackStream(() => {})
+      const failure = events.find((e) => e.stage === "failed")
+      if (failure) throw new Error(failure.error ?? "Slack sync failed.")
+      const processed = events.find((e) => e.stage === "done")?.processed ?? 0
+      setSlackResult(`Found ${processed} new message${processed === 1 ? "" : "s"}.`)
+      setReviewKey((k) => k + 1)
+      if (showMindmap) await refreshTree()
+    } catch (err) {
+      setSlackError(err instanceof Error ? err.message : "Couldn't sync Slack.")
+    } finally {
+      setSlackSyncing(false)
+    }
+  }
+
   // Events the mail pipeline auto-added to Google Calendar during this sync — offered here as
   // dismissible "Continue / Undo" cards rather than folded silently into the sync result, since
   // writing to someone's real calendar is the kind of side effect worth a chance to reverse.
@@ -315,7 +369,11 @@ function MailPanel({ onAskAbout }: { onAskAbout: (question: string) => void }) {
         ))}
       </AnimatePresence>
 
+      <NeedsAttentionPanel key={`attention-${reviewKey}`} />
+
       <MailReviewQueue key={reviewKey} onResolved={refreshAfterReview} />
+
+      <ActionItemsPanel key={`actions-${reviewKey}`} />
 
       <motion.div whileHover={{ y: -4 }} transition={{ type: "spring", stiffness: 300 }}>
       <Card>
@@ -344,12 +402,46 @@ function MailPanel({ onAskAbout }: { onAskAbout: (question: string) => void }) {
               )}
               {reloading ? "Syncing..." : "Sync Mail"}
             </Button>
+            {slackConfigured && (
+              <Button
+                onClick={handleSlackSync}
+                disabled={slackSyncing}
+                size="sm"
+                variant="secondary"
+                title={`Syncing from channel ${slackChannelId}`}
+              >
+                {slackSyncing ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <MessageSquare className="mr-2 h-4 w-4" />
+                )}
+                {slackSyncing ? "Syncing..." : "Sync Slack"}
+              </Button>
+            )}
             <Button onClick={handleShowMindmap} variant="outline" size="sm" className="bg-transparent border-primary/20 text-primary hover:bg-primary/10">
               <Map className="mr-2 h-4 w-4" />
               {showMindmap ? "Hide Map" : "View Map"}
             </Button>
           </div>
         </CardHeader>
+
+        {!slackConfigured && (
+          <CardContent className="flex flex-wrap items-center gap-2 border-b border-border/50 py-3">
+            <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0" />
+            <p className="text-xs text-muted-foreground shrink-0">
+              Also sync a Slack channel — connect Slack in Integrations, then paste its channel ID:
+            </p>
+            <Input
+              value={slackChannelInput}
+              onChange={(e) => setSlackChannelInput(e.target.value)}
+              placeholder="C0123ABCDEF"
+              className="h-8 max-w-[180px] text-sm"
+            />
+            <Button size="sm" variant="outline" onClick={saveSlackChannel} disabled={!slackChannelInput.trim()}>
+              Save
+            </Button>
+          </CardContent>
+        )}
 
         {reloading && (
           <CardContent>
@@ -365,6 +457,17 @@ function MailPanel({ onAskAbout }: { onAskAbout: (question: string) => void }) {
           >
             {reloadResult && <span>✓ {reloadResult}</span>}
             {reloadError && <span>! {reloadError}</span>}
+          </div>
+        )}
+
+        {!slackSyncing && (slackResult || slackError) && (
+          <div
+            className={`px-6 py-3 text-sm font-medium border-b border-border/50 ${
+              slackError ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-500"
+            }`}
+          >
+            {slackResult && <span>✓ Slack: {slackResult}</span>}
+            {slackError && <span>! Slack: {slackError}</span>}
           </div>
         )}
       </Card>

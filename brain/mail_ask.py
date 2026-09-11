@@ -1,8 +1,8 @@
 """brain/mail_ask.py — answer natural-language questions over the ingested mail tree.
 
-Mirrors brain/ask.py's Navigate -> Think shape but for mail_category -> mail_topic ->
-mail_thread nodes, and rides brain.openrouter (not brain.engine) since that's the engine
-already proven for the mail pipeline (classification/summarization in mail_ingest.py).
+Walks mail_category -> mail_topic -> mail_thread, then hands the model a bounded slice of it.
+Rides brain.openrouter, the same engine the mail pipeline already uses for classification and
+summarization (mail_ingest.py). This is the single Q&A path the console's Chat tab calls.
 
 Retrieval is bounded, not "dump the mailbox": every thread gets one summary line in the
 prompt (cheap — titles/summaries are short even at hundreds of threads), but only the BM25
@@ -13,10 +13,10 @@ MailChat UI, which has no "sources" affordance today.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
-from brain import bm25, profile, store
+from brain import bm25, calendar_tool, mail_timeline, profile, store
 from brain.openrouter import call_openrouter
 
 TOP_K = 8  # tunable: how many full thread bodies to include, see module docstring
@@ -35,7 +35,22 @@ about whether an attachment mentions the user, trust the attachment finding.
 
 A TODAY line gives the current real-world date. Use it to resolve relative time questions
 ("today", "this week", "how many days until the deadline", "is this overdue") — never guess
-today's date from anything else."""
+today's date from anything else.
+
+A CALENDAR EVENTS section, when present, lists the user's real upcoming Google Calendar
+events. It is the authoritative source for "what's on my calendar" / "what meetings do I have
+today" — prefer it over anything the mail implies about their schedule. It is separate from
+the mail tree, so don't describe those events as emails.
+
+Each overview line shows when that thread's mail was received ("~" means approximate) — use it
+for questions about when something arrived ("what came in last week"). DATED ITEMS lists the
+deadlines and events found in the mail, already marked OVERDUE / SOON / UPCOMING / PAST relative
+to TODAY — use it for "what's due", "what's coming up" and "what did I miss" questions. Where a
+dated item and a calendar event describe the same commitment, the calendar is authoritative."""
+
+# Dated items shown to the model: everything overdue or upcoming, capped so a mailbox full of
+# far-future events can't crowd out the actual mail context.
+MAX_DATED_ITEMS = 20
 
 
 def _walk_tree(conn: Any) -> list[tuple[str, str, dict[str, Any]]]:
@@ -109,6 +124,18 @@ def _overview_attachment_note(thread: dict[str, Any]) -> str:
     return f" [{len(findings)} attachment(s); does not name the user]"
 
 
+def _received_note(thread: dict[str, Any]) -> str:
+    timeline = mail_timeline.thread_timeline(thread)
+    last = timeline["last_received"]
+    if not last:
+        return ""
+    approx = "~" if timeline["received_estimated"] else ""
+    first = timeline["first_received"]
+    if first and first[:10] != last[:10]:
+        return f" (received {approx}{first[:10]} to {approx}{last[:10]})"
+    return f" (received {approx}{last[:10]})"
+
+
 def _format_overview(rows: list[tuple[str, str, dict[str, Any]]]) -> str:
     lines = []
     for cat, topic, thread in rows:
@@ -118,8 +145,39 @@ def _format_overview(rows: list[tuple[str, str, dict[str, Any]]]) -> str:
         # "not listed" about a shortlist the line said named the user.
         note = _overview_attachment_note(thread)
         prefix = f"{note} " if note else ""
-        lines.append(f"  {prefix}[{cat} > {topic}] {thread['title']} — {summary}")
+        received = _received_note(thread)
+        lines.append(f"  {prefix}[{cat} > {topic}] {thread['title']}{received} — {summary}")
     return "\n".join(lines)
+
+
+def _format_dated_items(rows: list[tuple[str, str, dict[str, Any]]], today: date) -> str:
+    """Every overdue or upcoming event across the mailbox, soonest first.
+
+    The overview's one-liners and the BM25-expanded bodies can't answer "what's due this week":
+    that question shares no words with the emails it's about, so ranking never surfaces them.
+    """
+    items: list[tuple[int, str]] = []
+    for cat, topic, thread in rows:
+        for event in mail_timeline.thread_timeline(thread)["events"]:
+            status = mail_timeline.thread_status({"events": [event]}, today)
+            days = status["days"]
+            if status["status"] == "past" and days is not None and days < -1:
+                continue
+            unit = "day" if abs(days) == 1 else "days"
+            when = (
+                "today" if days == 0 else f"in {days} {unit}" if days > 0 else f"{-days} {unit} ago"
+            )
+            kind = "DEADLINE" if event.get("kind") == "deadline" else "EVENT"
+            items.append(
+                (
+                    days,
+                    f"  {status['status'].upper()} {kind} {event['start'][:16]} ({when}): "
+                    f'{event["title"]} — from "{thread["title"]}" [{cat} > {topic}]',
+                )
+            )
+    items.sort(key=lambda item: item[0])
+    lines = [line for _, line in items[:MAX_DATED_ITEMS]]
+    return "\n".join(lines) or "(no dated items found in the mail)"
 
 
 def _format_attachments(thread: dict[str, Any]) -> str:
@@ -150,7 +208,7 @@ def _format_full_thread(cat: str, topic: str, thread: dict[str, Any]) -> str:
     # stale — one here read "attachments indicate the sender was not listed" for a spreadsheet
     # that does name the user — so the scanned facts must be read first, not last.
     return (
-        f"### {thread['title']}  [{cat} > {topic}]"
+        f"### {thread['title']}  [{cat} > {topic}]{_received_note(thread)}"
         f"{_format_attachments(thread)}\n"
         f"Summary: {thread.get('summary') or '(none)'}\n"
         f"Body:\n{body}"
@@ -162,11 +220,34 @@ def _format_profile(profile_details: list[dict[str, str]]) -> str:
     return "\n".join(lines) if lines else "(none provided)"
 
 
+def _calendar_section(user_id: str | int | None) -> str:
+    """Live Google Calendar events for the prompt, or "" when the calendar isn't connected.
+
+    Calendar access is optional, so a disconnected user just gets the mail-only behaviour —
+    but when it IS connected this is what lets "what meetings do I have today" be answered
+    from the real calendar rather than inferred from mail.
+    """
+    if user_id is None:
+        return ""
+    try:
+        events = calendar_tool.list_upcoming_events(user_id)
+    except Exception:
+        return ""
+    if not events:
+        return ""
+    lines = [
+        f"  {e['start']} — {e['title']}" + (f" @ {e['location']}" if e.get("location") else "")
+        for e in events
+    ]
+    return "=== CALENDAR EVENTS (upcoming, real, live) ===\n" + "\n".join(lines) + "\n\n"
+
+
 def build_prompt(
     question: str,
     rows: list[tuple[str, str, dict[str, Any]]],
     top_threads: list[tuple[str, str, dict[str, Any]]],
     profile_details: list[dict[str, str]],
+    user_id: str | int | None = None,
 ) -> str:
     overview = _format_overview(rows)
     full = "\n\n".join(_format_full_thread(c, t, th) for c, t, th in top_threads) or (
@@ -175,10 +256,13 @@ def build_prompt(
     )
     # Not named `profile`: that would shadow the imported brain.profile module.
     profile_block = _format_profile(profile_details)
-    today = datetime.now().strftime("%A, %Y-%m-%d")
+    now = datetime.now()
+    dated = _format_dated_items(rows, now.date())
     return (
         f"{SYSTEM}\n\n"
-        f"=== TODAY ===\n{today}\n\n"
+        f"=== TODAY ===\n{now.strftime('%A, %Y-%m-%d')}\n\n"
+        f"{_calendar_section(user_id)}"
+        f"=== DATED ITEMS (deadlines and events, soonest first) ===\n{dated}\n\n"
         f"=== MAIL OVERVIEW (every thread, one line each) ===\n{overview}\n\n"
         f"=== RELEVANT THREADS IN FULL ===\n{full}\n\n"
         f"=== ABOUT THE PERSON ASKING (optional context) ===\n{profile_block}\n\n"
@@ -192,11 +276,14 @@ def ask_mail(
     profile_details: list[dict[str, str]] | None = None,
     *,
     top_k: int = TOP_K,
+    user_id: str | int | None = None,
 ) -> dict[str, str]:
     """Answer `question` over the mail knowledge tree. Returns {"answer": str}.
 
-    Empty tree short-circuits to a canned message without calling the LLM (mirrors
-    brain.ask.ask's empty-catalogue return).
+    `user_id` is only needed to pull this user's live calendar events into the prompt — the
+    mail side all rides `conn`, which is already per-user.
+
+    Empty tree short-circuits to a canned message without calling the LLM.
     """
     rows = _walk_tree(conn)
     if not rows:
@@ -211,6 +298,6 @@ def ask_mail(
     merged = list(profile_details or []) + [d for d in stored if d["key"].lower() not in seen]
 
     top_threads = _rank_threads(question, rows, top_k=top_k)
-    prompt = build_prompt(question, rows, top_threads, merged)
+    prompt = build_prompt(question, rows, top_threads, merged, user_id)
     reply = call_openrouter(prompt)
     return {"answer": reply.strip()}

@@ -1,11 +1,12 @@
 import { LogOut, PanelLeftClose, PanelLeftOpen } from "lucide-react"
 import { useEffect, useState } from "react"
-import { LayoutDashboard, MessageSquare, User, Plug, CheckCircle2, XCircle } from "lucide-react"
+import { LayoutDashboard, MessageSquare, User, Plug, CheckCircle2, XCircle, BarChart3 } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 
 import { getHealth, getMe } from "@/api"
 import { clearToken, getToken, onAuthChange, setRole, setToken } from "@/auth"
-import { getMailStatus, getMailTree } from "@/lib/brainApi"
+import { getCalendarStatus, getMailStatus, getMailTree } from "@/lib/brainApi"
+import { Analytics } from "@/pages/Analytics"
 import { Applications } from "@/pages/Applications"
 import { Chat } from "@/pages/Chat"
 import { Home } from "@/pages/Home"
@@ -13,11 +14,12 @@ import { Login } from "@/pages/Login"
 import { Profile } from "@/pages/Profile"
 import { ThemeToggle } from "@/components/ThemeToggle"
 
-export type View = "chat" | "mail" | "profile" | "applications"
+export type View = "chat" | "mail" | "analytics" | "profile" | "applications"
 
 const NAV: { view: View; label: string; icon: typeof LayoutDashboard }[] = [
   { view: "chat", label: "Chat", icon: MessageSquare },
   { view: "mail", label: "Mail", icon: LayoutDashboard },
+  { view: "analytics", label: "Analytics", icon: BarChart3 },
   { view: "applications", label: "Integrations", icon: Plug },
   { view: "profile", label: "Profile", icon: User },
 ]
@@ -85,18 +87,28 @@ export default function App() {
     if (!token) return
     let cancelled = false
 
-    Promise.all([getHealth(), getMailStatus().catch(() => ({ connected: false }))]).then(
-      ([health, mail]) => {
-        if (cancelled) return
-        const connected = health.integrations.filter((i) => i.status === "configured").length
-        setRail((r) => ({
-          ...r,
-          appsConnected: connected + (mail.connected ? 1 : 0),
-          appsTotal: health.integrations.length + 1,
-          mailConnected: mail.connected,
-        }))
-      },
-    )
+    // The rail's "connections" count is exactly the three cards the Integrations page actually
+    // shows: Gmail and Google Calendar (status from the brain service) plus Slack (status from
+    // console/backend's /health). Counting anything beyond those three in the denominator is
+    // what produced the wrong "2/4".
+    Promise.all([
+      getHealth(),
+      getMailStatus().catch(() => ({ connected: false })),
+      getCalendarStatus().catch(() => ({ connected: false })),
+    ]).then(([health, mail, calendar]) => {
+      if (cancelled) return
+      const slackConnected = health.integrations.some(
+        (i) => i.name === "slack" && i.status === "configured",
+      )
+      const connected =
+        (mail.connected ? 1 : 0) + (calendar.connected ? 1 : 0) + (slackConnected ? 1 : 0)
+      setRail((r) => ({
+        ...r,
+        appsConnected: connected,
+        appsTotal: 3,
+        mailConnected: mail.connected,
+      }))
+    })
 
     getMailTree()
       .then((tree) => {
@@ -274,41 +286,43 @@ export default function App() {
           </div>
         </header>
 
-        {view === "chat" ? (
-          <div className="min-h-0 flex-1">
-            <Chat seed={chatSeed} onSeedConsumed={() => setChatSeed(null)} />
-          </div>
-        ) : (
-          <div className="flex-1 overflow-auto p-6 md:p-10 relative">
-            {/* Subtle background glow effect */}
+        <div className={view === "chat" ? "flex-1 min-h-0 relative" : "flex-1 overflow-auto p-6 md:p-10 relative"}>
+          {/* Subtle background glow effect — skipped on Chat, which is full-bleed with its own
+              dark thread background rather than the padded/glowing page shell. */}
+          {view !== "chat" && (
             <div className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-primary/5 rounded-full blur-3xl opacity-50" />
+          )}
 
-            <div className="max-w-4xl mx-auto w-full relative z-10">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={view}
-                  initial={{ opacity: 0, y: 15, filter: "blur(4px)" }}
-                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-                  exit={{ opacity: 0, y: -15, filter: "blur(4px)" }}
-                  transition={{ duration: 0.25, ease: "easeOut" }}
-                >
-                  {view === "mail" && (
-                    <Home
-                      rail={rail}
-                      onNavigate={setView}
-                      onAskAbout={(question) => {
-                        setChatSeed(question)
-                        setView("chat")
-                      }}
-                    />
-                  )}
-                  {view === "applications" && <Applications onMailStatusChange={refresh} />}
-                  {view === "profile" && <Profile />}
-                </motion.div>
-              </AnimatePresence>
-            </div>
+          <div className={view === "chat" ? "h-full w-full relative z-10" : "max-w-4xl mx-auto w-full relative z-10"}>
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={view}
+                className={view === "chat" ? "h-full" : undefined}
+                initial={{ opacity: 0, y: 15, filter: "blur(4px)" }}
+                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                exit={{ opacity: 0, y: -15, filter: "blur(4px)" }}
+                transition={{ duration: 0.25, ease: "easeOut" }}
+              >
+                {view === "chat" && (
+                  <Chat seed={chatSeed} onSeedConsumed={() => setChatSeed(null)} />
+                )}
+                {view === "mail" && (
+                  <Home
+                    rail={rail}
+                    onNavigate={setView}
+                    onAskAbout={(question) => {
+                      setChatSeed(question)
+                      setView("chat")
+                    }}
+                  />
+                )}
+                {view === "analytics" && <Analytics />}
+                {view === "applications" && <Applications onMailStatusChange={refresh} />}
+                {view === "profile" && <Profile />}
+              </motion.div>
+            </AnimatePresence>
           </div>
-        )}
+        </div>
       </main>
     </div>
   )

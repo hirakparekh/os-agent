@@ -8,7 +8,7 @@ from the LLM returning identical text (per the Plan B write-path design).
 It is a pure function: no database, no network, no LLM. The caller (the store) applies the decision.
 
 Matching rules, in order:
-  1. The candidate carries a real source id (e.g. ClickUp id)  -> exact match on that id.
+  1. The candidate carries a real source id (`source_id`)  -> exact match on that id.
   2. No source id -> a natural key = hash(normalized name + normalized assignee).
      The natural key deliberately omits the meeting id, so the same action item mentioned across
      several meetings resolves to ONE task (cross-meeting dedup).
@@ -22,11 +22,11 @@ from __future__ import annotations
 import difflib
 import hashlib
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 # Fields that may carry an upstream id. The first present one is treated as the source key.
-SOURCE_ID_FIELDS = ("source_id", "clickup_id")
+SOURCE_ID_FIELDS = ("source_id",)
 
 # Name-similarity (0..1) at/above which a same-assignee task is flagged as a possible duplicate.
 FUZZY_THRESHOLD = 0.80
@@ -34,10 +34,10 @@ FUZZY_THRESHOLD = 0.80
 
 @dataclass(frozen=True)
 class Resolution:
-    action: str           # "create" | "update" | "review"
-    key: str              # the key computed for the candidate (source id or natural key)
+    action: str  # "create" | "update" | "review"
+    key: str  # the key computed for the candidate (source id or natural key)
     matched_id: str | None  # id of the existing task this matched, if any
-    reason: str           # human-readable explanation of the decision
+    reason: str  # human-readable explanation of the decision
 
 
 def normalize(text: str | None) -> str:
@@ -61,11 +61,13 @@ def _source_id(task: dict) -> str | None:
     return None
 
 
-def resolve(candidate: dict, existing: Iterable[dict], *, fuzzy_threshold: float = FUZZY_THRESHOLD) -> Resolution:
+def resolve(
+    candidate: dict, existing: Iterable[dict], *, fuzzy_threshold: float = FUZZY_THRESHOLD
+) -> Resolution:
     """Decide whether `candidate` is new, an update, or a review-needed near-duplicate."""
     existing = list(existing)
 
-    # 1. Exact source-id match (ClickUp id, etc.) — the id IS the key.
+    # 1. Exact source-id match — the id IS the key.
     cid = _source_id(candidate)
     if cid:
         for e in existing:
@@ -92,8 +94,11 @@ def resolve(candidate: dict, existing: Iterable[dict], *, fuzzy_threshold: float
                 best_ratio, best = ratio, e
         if best is not None:
             return Resolution(
-                "review", key, best.get("id"),
-                f"possible duplicate: name {best_ratio:.0%} similar with same assignee — needs confirmation",
+                "review",
+                key,
+                best.get("id"),
+                f"possible duplicate: name {best_ratio:.0%} similar with same assignee "
+                "— needs confirmation",
             )
 
     # 4. Genuinely new.

@@ -1,166 +1,185 @@
 # Agent OS — Current State (2026-09-11)
 
 > **Why this file exists:** `README.md`, `system-overview.md`, and
-> `agent-os-clean-room-architecture.md` describe the *original* pitch (Fathom → Hermes →
-> ClickUp co-pilot loop). That loop was never built. What actually got built instead is a
-> **personal knowledge-graph brain with a Gmail mail pipeline and a chat console** — this doc
-> describes *that*, as it exists in the repo today, not the original vision. Treat this as the
-> source of truth for "what actually works right now"; treat the other docs as historical
-> context / possible future direction.
+> `agent-os-clean-room-architecture.md` describe the *original* pitch (a Fathom → Hermes →
+> ClickUp co-pilot loop, résumé parsing, staff onboarding). None of that exists any more — it
+> was removed once it became clear nothing in the app could reach it. This file describes what
+> is actually here today. Treat the others as historical.
 
 ---
 
 ## One sentence
 
-Each user connects their own Gmail; a local FastAPI service (`brain`) ingests mail into a
-per-user SQLite entity graph, classifies threads into categories/topics, and answers natural-
-language questions over that graph (and separately over ingested résumés/meetings) via a free
-OpenRouter LLM — all fronted by a React console with its own login/session layer.
+Each user connects their own Gmail (and optionally Slack and Google Calendar); a local FastAPI
+service ingests those messages into a per-user SQLite knowledge tree, sorts them into
+categories and topics, flags what's urgent, and answers natural-language questions about them —
+all behind a React console with its own login.
 
 ---
 
 ## Processes (three, all local)
 
-| Process | Port | Framework | Purpose |
-|---|---|---|---|
-| `brain` (`brain/viz_server.py`) | 8080 | FastAPI | mail ingest, classification, entity graph, LLM Q&A |
-| `console/backend` | 8000 | FastAPI | user accounts, JWT auth, chat sessions, onboarding/roster |
-| `console/frontend` | 5173 | React + Vite | the UI (login, chat, mail mindmap, profile) |
+| Process | Port | Purpose |
+|---|---|---|
+| `brain` (`brain/viz_server.py`) | 8080 | The knowledge tree, ingest pipelines, Google OAuth, Q&A, analytics |
+| `console/backend` | 8000 | Accounts, login, chat-session storage, the Slack token |
+| `console/frontend` | 5173 | The UI (Vite dev server) |
 
-Started per `SETUP.md`; no Docker/Postgres required for local dev (SQLite everywhere,
-Postgres is compose-only and not currently wired up).
+SQLite throughout; no Postgres needed locally. Start them per `SETUP.md`.
 
-Auth is shared, not proxied: **console/backend** issues JWTs (HS256, `OPS_SECRET_KEY`) on
-login and is the only place able to *create* accounts (admin-only `POST /auth/users`, no
-self-registration). **brain** independently decodes the same JWT (`brain/auth.py:
-get_current_user_id`) — it never calls console/backend to validate a token, it just needs the
-same secret. This is why both `.env` files must share `OPS_SECRET_KEY`, and why two people
-running their own separate stacks each get their own independent admin account, database, and
-mailbox (see "Multi-machine / multi-user model" below).
+**Auth is shared, not proxied.** `console/backend` issues an HS256 JWT at `/auth/login` and is
+the only place that can create accounts (admin-only `POST /auth/users`; there is no self-signup).
+`brain` verifies that *same* token itself via `security/tokens.py` rather than calling
+console/backend. Hence the hard requirement that **both processes run with the same
+`OPS_SECRET_KEY`** — mismatch means every cross-service call 401s.
 
 ---
 
 ## Data model (`brain/store.py`)
 
-One SQLite file per user (`brain/data/users/<user_id>/brain.db`, or a shared `brain.db` when
-no user context applies), two tables:
+One SQLite file per user (`brain/data/users/<user_id>/brain.db`), two tables:
 
-- **`entities`**: `id, type, title, summary, data (JSON), needs_review, created_at, updated_at`
-  — types in use: `person`, `task`, `meeting` (résumé/meeting pipeline) and `mail_category` /
-  `mail_topic` / `mail_thread` (mail pipeline).
-- **`edges`**: `src_id, dst_id, relation` — e.g. `mail_category --contains--> mail_topic
-  --contains--> mail_thread`.
+- **`entities`**: `id, type, natural_key, title, summary, data (JSON), source, needs_review,
+  created_at, updated_at`
+- **`edges`**: `src_id, dst_id, relation, data` — the tree is
+  `mail_category --contains--> mail_topic --contains--> mail_thread`
 
-No embeddings, no vector DB. Retrieval is "read the whole graph into a compact text catalogue
-and let the LLM reason over it" (`brain/ask.py`) or "BM25-rank threads, expand only the top-K
-into full text" (`brain/mail_ask.py`) — both bounded by prompt size, not semantic search.
+Entity types in use: `mail_category`, `mail_topic`, `mail_thread`, `mail_rule` (keywords learned
+from your corrections), `mail_settings` (per-user toggles), `automation_rule`, `profile`.
 
----
+`data` is an unconstrained JSON blob, which is why features like urgency flags, action items and
+calendar bookkeeping were added without a single migration.
 
-## Mail pipeline (`brain/mail_ingest.py`, `brain/emailtool.py`)
-
-1. **Auth**: Gmail OAuth2 (`InstalledAppFlow.run_local_server` — a local, server-side browser
-   consent flow; cannot be completed remotely). Token cached at
-   `~/.hermes/mail/<user_id>/{token,meta}.json`. The Google Cloud OAuth consent screen is in
-   **Testing** publish status, so any Gmail account must be added under **Test users** or
-   consent fails with an unhelpful `access_denied`. There is no separate "hermes" auth path —
-   that name only refers to an unrelated LLM CLI tool used for a different deploy workflow
-   (`docs/hermes-integration-guide.md`); for mail, OAuth + Test Users is the *only* mechanism.
-2. **Fetch**: IMAP XOAUTH2, windowed (unread / recent), one thread per email chain.
-3. **Classify** (`score_categories` + `arbitrate_category`): a hand-built vocabulary scorer,
-   **not BM25** — BM25's length-normalization was found to actively penalize categories with
-   richer keyword lists (proven bug: adding synonyms to a category could make it lose to a
-   rival). The scorer counts presence (not frequency) of phrase/word keywords per zone
-   (subject weighted 3x, body 1x, negative keywords veto/penalize), floors low-signal
-   categories out, and only overrides the LLM's own guess when the keyword signal is confident
-   (margin check, not just a tie-break). `brain/bm25.py` is unchanged and still used for
-   `mail_ask.py`'s thread ranking, where ranking real documents against a query is exactly
-   what BM25 is for.
-4. **Learn**: `learn_category_keywords` / `learned_keywords` — manual reclassifications feed
-   back into future scoring per-user, so corrections compound instead of being one-off.
-5. **Attachments**: local Excel/PDF parsing (`mail_attachments.py`), OCR for scanned content,
-   findings merged into thread data and treated as authoritative over the thread summary.
-6. **Review queue**: low-confidence classifications set `needs_review`, surfaced via
-   `GET /api/mail/review` and `MailReviewQueue.tsx`. `POST /api/mail/reclassify` moves a
-   thread to a different category/topic (creating the destination if needed), clears the flag,
-   and `prune_empty_mail_nodes` removes any category/topic left with no children.
-
-## Brain API (`brain/viz_server.py`, all under `CurrentUser` JWT auth unless noted)
-
-| Route | Purpose |
-|---|---|
-| `GET /api/data` | full entity graph (résumé/meeting side) |
-| `POST /api/ask` | Q&A over the person/task/meeting graph (`brain/ask.py`) |
-| `POST /api/ingest_resume` | ingest a résumé/meeting transcript |
-| `GET /api/mail_tree` | category → topic → thread tree for the mindmap UI |
-| `POST /api/mail/reload`, `/reload/stream` | re-run ingest (streaming variant reports progress) |
-| `GET /api/mail/status`, `POST /connect`, `POST /disconnect` | Gmail OAuth lifecycle |
-| `POST /api/mail/ask` | Q&A over the mail tree (`brain/mail_ask.py`) |
-| `GET/PUT /api/profile` | free-form key/value profile used as optional chat context |
-| `POST /api/mail/attachments/rescan` | re-run attachment OCR/parsing |
-| `GET /api/mail/review`, `POST /api/mail/reclassify` | review queue + manual correction |
-
-## Console backend API (`console/backend`)
-
-| Route | Purpose |
-|---|---|
-| `POST /auth/login`, `GET /auth/me`, `POST /auth/users` (admin only) | accounts |
-| `GET /health` | composite health incl. brain reachability |
-| `POST/GET /sessions`, `GET/DELETE /sessions/{id}`, `POST /sessions/{id}/messages` | chat sessions persisted in the console's own DB; message POST calls `brain`'s `/api/ask` server-side |
-| `POST /onboarding` (admin/team_lead/hr), `GET /roster`, `GET /roster/me` | employee onboarding → ClickUp task + roster |
-| `GET /resume` | résumé retrieval |
-
-## Frontend (`console/frontend/src`)
-
-Pages: `Login`, `Home` (mail-first dashboard + mindmap entry), `Chat`, `Applications`
-(onboarding/roster), `Profile`. No router — navigation is component state, so there is no
-deep-linking. Key components: `MailMindmap` (D3 tree, reclassify control inline against
-`--mm-*` CSS vars since the panel is dark against an otherwise light/Tailwind app),
-`MailReviewQueue`, `MailIngestProgress`, `ChatThread`. Demo mode: if
-`VITE_API_BASE_URL` is unset at build time the app runs against fake local data instead of a
-backend — a Vite-inlined constant, not runtime-configurable.
+No embeddings and no vector database. Retrieval is "BM25-rank the threads, expand only the top
+few into full text" (`brain/mail_ask.py`) — bounded by prompt size, not similarity search.
 
 ---
 
-## Multi-machine / multi-user model (the thing that caused teammate login confusion)
+## The ingest pipeline
 
-Each developer runs **their own full stack** locally — there is no shared/hosted instance.
-Consequences that aren't obvious from the code alone:
+`brain/mail_ingest.py::_ingest_message` is **channel-agnostic**. It takes
+`{uid, from, subject, body_text, attachments}` plus a `channel` tag; Gmail and Slack are just two
+adapters feeding the same function. Nothing downstream branches on the source, which is why a
+Slack message and an email about the same subject land under the same topic and can merge into
+one thread.
 
-- `console-local.db` (SQLite) is per-machine. `seed_admin()` auto-creates exactly one admin
-  account from that machine's own `.env` (`OPS_ADMIN_EMAIL`/`OPS_ADMIN_PASSWORD`) on every
-  startup. Accounts created via `POST /auth/users` on one machine **do not exist** on anyone
-  else's machine — there's no sync.
-- A teammate should log in with the admin credentials from *their own* `.env`, not credentials
-  created on someone else's machine.
-- Each teammate needs their own Gmail account added to their own Google Cloud project's OAuth
-  **Test users** list, and must complete the OAuth consent flow **on their own machine**
-  (it's a local browser callback — not remotely completable).
-- `SETUP.md` is the authoritative onboarding doc for a brand-new machine, including the exact
-  server-start commands and the Test Users troubleshooting step.
+Per message: parse attachments → classify → decide merge/new/duplicate → store.
+
+- **Classification** is a hand-built vocabulary scorer (`score_categories` + `arbitrate_category`),
+  *not* BM25. BM25's length normalisation actively penalised categories with richer keyword
+  lists — adding synonyms to a category could make it lose. The scorer counts keyword presence
+  per zone (subject ×3, body ×1, negative keywords veto), and only overrides the model's own
+  guess when the keyword signal is confidently ahead. `brain/bm25.py` is still used, correctly,
+  for ranking threads against a question.
+- **Learning**: reclassifying a thread by hand teaches the scorer (`mail_rule`), so the same
+  mistake doesn't repeat.
+- **Duplicate suppression**: near-identical body text (difflib ≥ 0.85) collapses into the
+  existing thread instead of creating a second one.
+- **Urgency and action items** are deterministic keyword/regex passes — no LLM, no cost.
+- **Dates** (`brain/mail_timeline.py`): each thread records `received_at` — every source message's own Date header, keyed by uid, no LLM — and `events`, the deadlines and dates
+  the existing merge/place model call already extracts, kept now even when Calendar is not
+  connected. Dates are thread *attributes*, never a level of the tree: the console's "By
+  time" view regroups the same thread nodes client-side. Threads ingested before this fall
+  back to `created_at`, marked approximate, so no migration was needed. Overdue / due-soon /
+  upcoming is derived from today on every read, never stored.
+- **Attachments**: Excel/CSV/PDF/DOCX parsed locally; images via local OCR, falling back to a
+  vision model only if Tesseract is absent.
+
+**Offline mode** (`mail_settings.offline_mode`, toggled on the Integrations page) means *"never
+call the LLM"* — not *"works without a network"*. IMAP still runs. Classification falls back to
+keyword scoring, summaries become raw email text, and calendar-event extraction is skipped.
+
+---
+
+## Google OAuth
+
+Consent is a **redirect flow** (`brain/oauth_flow.py`): `connect` returns a Google URL, the
+user's own browser consents, Google redirects to `/api/oauth/callback`, the server exchanges the
+code, and the client polls status. The `state` is a short-lived JWT signed with `OPS_SECRET_KEY`
+carrying `(user_id, service)` — the callback can't carry a bearer token, so that signature is how
+the server knows whose grant arrived and why a forged callback is useless.
+
+This replaced an older flow that opened a consent window *on the server* and blocked; it only
+worked because the server and the browser were the same machine, and it was the one thing
+preventing this from being hosted anywhere.
+
+> **Expect to reconnect Gmail about weekly.** The app requests `https://mail.google.com/` — a
+> *restricted* scope, required for IMAP — on an unverified OAuth client, so Google expires its
+> refresh tokens after 7 days. Clearing that needs full Google verification plus a third-party
+> security assessment. It is a permanent property of this project, not a bug. Status reports
+> `needs_reconnect` so the UI offers a button. **Reconnect before any demo** — an expired grant
+> looks exactly like an empty inbox.
+
+Tokens live at `~/.hermes/mail/<user_id>/token.json` and `~/.hermes/calendar/<user_id>/token.json`.
+The Slack bot token is org-wide at `~/.hermes/console-integrations.json`.
+
+---
+
+## API surface
+
+**brain** (all bearer-auth except `GET /`, `GET /mail-tree`, and the OAuth callback):
+`/api/mail_tree`, `/api/mail_tree/export`, `/api/mail/reload(+/stream)`,
+`/api/mail/status|connect|disconnect`, `/api/mail/ask`, `/api/mail/review`,
+`/api/mail/reclassify`, `/api/mail/attachments/rescan`,
+`/api/calendar/status|connect|disconnect|events`, `/api/calendar/events/{id}/undo`,
+`/api/slack/status|reload|reload/stream`, `PUT /api/slack/channel`, `/api/profile`,
+`/api/settings`, `/api/rules` (+`DELETE /api/rules/{id}`), `/api/needs-attention`,
+`/api/action-items`, `/api/analytics/category-volume`, `/api/oauth/callback`.
+
+**console/backend**: `/health`, `/auth/login`, `/auth/me`, `/auth/users`,
+`/applications/{id}/connect|disconnect`, and chat under a `/chat` prefix —
+`/chat/sessions`, `/chat/sessions/{id}`, `/chat/sessions/{id}/messages`.
+
+Chat goes through `/api/mail/ask`. Its prompt carries today's date and, when Calendar is
+connected, your real upcoming events — so "how many days until X" and "what's on my calendar"
+are both answerable.
+
+---
+
+## Frontend
+
+Pages: **Chat**, **Mail** (`Home.tsx` — sync, review queue, needs-attention, action items, D3
+mindmap), **Analytics**, **Integrations** (`Applications.tsx` — Gmail/Calendar/Slack cards,
+offline toggle, automation rules), **Profile**. No router; navigation is component state, so
+there is no deep-linking.
+
+---
+
+## Multi-machine / multi-user model
+
+Everyone runs their **own full stack**; there is no shared instance.
+
+- `console-local.db` is per-machine. `seed_admin()` creates exactly one admin from that
+  machine's `.env` on startup. Accounts created on one machine do not exist on another.
+- Each person connects their own Gmail, and each Google account must be added under **Test
+  users** on the OAuth consent screen or consent fails with an unhelpful `access_denied`.
+- `SETUP.md` is authoritative for setting up a new machine.
 
 ---
 
 ## Testing
 
-- `uv run pytest` — Python unit/integration tests for `brain` and `console/backend`
-  (189 passing as of this doc; one pre-existing unrelated failure,
-  `test_onboarding_creates_clickup_task_and_appears_in_roster`, fails on a clean tree too).
-- `console/frontend/e2e/*.spec.ts` (Playwright) — real frontend + real both backends, with
-  only OpenRouter faked (`e2e/support/fake_openrouter.py`) and Gmail/IMAP untouched (mail data
-  is pre-seeded directly into a temp per-user SQLite file, `e2e/support/seed.py`). Covers
-  login, chat send/persist/reload, mail mindmap, thread reclassification, and a two-user
-  isolation check (user B can't see user A's chats or mail). Run via `npm run test:e2e` in
-  `console/frontend`.
+- `uv run pytest` — **220 passing, 0 failing.**
+- Playwright (`console/frontend`, `npm run test:e2e`) — **18 passing**, against the real
+  frontend and both real backends, faking only OpenRouter and pre-seeding the mail tree.
+- `uv run mypy` and `uv run lint-imports` are clean.
+- **`ruff` is not clean, and predates this work**: 13 lint errors and 17 files the formatter
+  would rewrite, including files untouched for months. CI (`ruff format --check`) has therefore
+  been red on `main` independently of any recent change. CI runs on pushes to `main` and on pull
+  requests only.
 
-## Recently fixed (this repo's classification work)
+---
 
-- BM25 was replaced as the mail classifier (kept only for thread search ranking) after a
-  reproducible bug: a college-wide "yoga competition" email was misfiled under "Placements"
-  because BM25's length normalization rewarded a category for having *fewer* keywords, so
-  enriching the correct category's vocabulary made things worse, not better.
-- The LLM chat/mail-Q&A prompts (`brain/ask.py`, `brain/mail_ask.py`) previously had **no
-  notion of the current date**, so relative-time questions ("what meetings do I have today",
-  "how many days until X") were unanswerable. Both prompts now include a `=== TODAY ===` line
-  (`datetime.now()`, computed per-request) plus an instruction to resolve relative-time
-  questions against it rather than guessing.
+## Known gaps — read before demoing
+
+1. **Slack ingestion has never run against real Slack.** Every surrounding piece is tested with
+   a stand-in, but the actual API call has never executed: it needs the `channels:history` scope,
+   which hasn't been granted. Same caveat applies to automation rules actually *posting*.
+2. **"Automatic sync every 4 hours" on the Mail page is not true.** There is no scheduler in the
+   app. `scripts/mail_cron.ps1` exists but must be registered manually as a Windows task, and
+   `SETUP.md` never explains how. Mail syncs when you press the button.
+3. **Needs-attention and action-items are empty for threads ingested before those features
+   existed.** They populate on the next sync. Nothing is broken.
+4. **Calendar auto-add from mail** works in both directions individually, but the full
+   "email arrives → event appears" chain hasn't been observed on real mail yet.
+5. **The weekly Gmail reconnect**, above.

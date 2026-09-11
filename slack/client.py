@@ -1,8 +1,9 @@
 """Slack outbound client — post a message to a channel.
 
-Safe by default: with no `SLACK_BOT_TOKEN` (or no channel) it runs **dry-run** — it prints what it would
+Safe by default: with no `SLACK_BOT_TOKEN` (or no channel) it runs **dry-run** — it prints
+what it would
 send and touches no network. Drop a bot token + channel into `.env` and it goes live. Mirrors the
-`clickup/` client shape: one typed class, credentials from the environment, nothing else.
+project's client conventions: one typed class, credentials from the environment, nothing else.
 
     from slack.client import SlackClient
     SlackClient().post("hello")            # dry-run unless SLACK_BOT_TOKEN + SLACK_CHANNEL are set
@@ -22,7 +23,10 @@ class SlackClient:
         self.dry_run = not self._token
 
     def post(self, text: str, channel: str | None = None) -> dict[str, Any]:
-        """Post `text` to `channel` (or the default). Returns a small result dict; never raises on dry-run."""
+        """Post `text` to `channel` (or the default).
+
+        Returns a small result dict; never raises on dry-run.
+        """
         ch = channel or self.default_channel
         if self.dry_run or not ch:
             print(f"[slack dry-run] #{ch or '?'}: {text}")

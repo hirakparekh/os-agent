@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import copy
+import difflib
 import json
 import re
 import subprocess
@@ -27,7 +28,7 @@ from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
-from brain import bm25, calendar_tool, profile, store
+from brain import automation, bm25, calendar_tool, mail_timeline, profile, store
 from brain.emailtool import ATTACHMENT_CACHE
 from brain.mail_attachments import process_attachment
 from brain.openrouter import call_openrouter
@@ -60,26 +61,109 @@ MARGIN_DELTA = 2.0
 # what lets this list be aggressive: "dream company" and "off-campus" survive as phrases while the
 # bare tokens they used to leak (`dream`, `company`, `off`, `on`) cannot vote. `on` in particular
 # matched virtually every English email and handed Placements a free point on every one.
-KEYWORD_STOPWORDS = frozenset({
-    "a", "an", "and", "all", "any", "are", "as", "at", "be", "by", "can", "do", "for",
-    "from", "has", "have", "if", "in", "into", "is", "it", "its", "new", "no", "not",
-    "of", "off", "on", "open", "or", "our", "so", "that", "the", "then", "there",
-    "these", "they", "this", "to", "up", "us", "via", "was", "we", "were", "what",
-    "when", "where", "which", "who", "why", "will", "with", "you", "your",
-    # generic-business poison that shows up in real keyword lists
-    "company", "dream", "college", "student", "students", "email", "mail", "link",
-    "form", "team", "update", "details", "information", "please", "kindly", "dear",
-    "regards", "register", "registration",
-})
+KEYWORD_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "all",
+        "any",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "can",
+        "do",
+        "for",
+        "from",
+        "has",
+        "have",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "new",
+        "no",
+        "not",
+        "of",
+        "off",
+        "on",
+        "open",
+        "or",
+        "our",
+        "so",
+        "that",
+        "the",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "to",
+        "up",
+        "us",
+        "via",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "will",
+        "with",
+        "you",
+        "your",
+        # generic-business poison that shows up in real keyword lists
+        "company",
+        "dream",
+        "college",
+        "student",
+        "students",
+        "email",
+        "mail",
+        "link",
+        "form",
+        "team",
+        "update",
+        "details",
+        "information",
+        "please",
+        "kindly",
+        "dear",
+        "regards",
+        "register",
+        "registration",
+    }
+)
 
 # Terms that describe a *recruitment process*. Deliberately excludes bare "placement": the
 # "Training and Placement Cell" is the organiser of nearly every college email — including the
 # yoga-competition one this guardrail exists to get right — so it must not license a brand term.
 PLACEMENT_CONTEXT: tuple[str, ...] = (
-    "drive", "recruit", "recruitment", "recruiter", "hiring", "interview",
-    "internship", "ctc", "lpa", "stipend", "offer letter", "shortlisted",
-    "eligibility", "job description", "on-campus", "off-campus",
-    "campus drive", "career fair",
+    "drive",
+    "recruit",
+    "recruitment",
+    "recruiter",
+    "hiring",
+    "interview",
+    "internship",
+    "ctc",
+    "lpa",
+    "stipend",
+    "offer letter",
+    "shortlisted",
+    "eligibility",
+    "job description",
+    "on-campus",
+    "off-campus",
+    "campus drive",
+    "career fair",
 )
 
 # Brand names that are also ubiquitous products ("Google Form", "Google Meet"). They score only
@@ -98,47 +182,142 @@ DEFAULT_CONFIG = {
     # Anything that counts as "you" inside an attachment — name, roll/neo id, registration
     # number. Used to answer "am I on this shortlist?" (see brain/mail_attachments.py).
     "identifiers": [],
-    "resume_path": "",
     "seeded_categories": ["Lectures & Profs", "Placements", "General College"],
     "category_keywords": {
         "Lectures & Profs": [
-            "lecture", "lectures", "guest lecture", "professor", "faculty",
-            "assignment", "submission", "class", "classes", "syllabus", "course",
-            "curriculum", "lab", "seminar", "tutorial", "instructor", "grade",
-            "marks", "attendance",
+            "lecture",
+            "lectures",
+            "guest lecture",
+            "professor",
+            "faculty",
+            "assignment",
+            "submission",
+            "class",
+            "classes",
+            "syllabus",
+            "course",
+            "curriculum",
+            "lab",
+            "seminar",
+            "tutorial",
+            "instructor",
+            "grade",
+            "marks",
+            "attendance",
         ],
         # NOTE: "training" is deliberately absent — "Training and Placement Cell" is the
         # organiser line of nearly every college email, including non-placement ones.
         "Placements": [
-            "placement", "placements", "placement drive", "campus drive",
-            "off-campus", "on-campus", "pre-placement talk",
-            "internship", "intern", "recruiter", "recruitment", "hiring",
-            "job", "jobs", "career fair", "job description", "offer letter",
-            "ctc", "lpa", "stipend", "package", "dream company", "onboarding",
-            "interview", "hr round", "technical round", "aptitude test",
-            "online assessment", "shortlisted", "eligibility criteria", "resume",
-            "accenture", "honeywell", "epsilon", "tcs", "infosys", "wipro",
-            "cognizant", "capgemini", "deloitte", "hcl", "tech mahindra",
+            "placement",
+            "placements",
+            "placement drive",
+            "campus drive",
+            "off-campus",
+            "on-campus",
+            "pre-placement talk",
+            "internship",
+            "intern",
+            "recruiter",
+            "recruitment",
+            "hiring",
+            "job",
+            "jobs",
+            "career fair",
+            "job description",
+            "offer letter",
+            "ctc",
+            "lpa",
+            "stipend",
+            "package",
+            "dream company",
+            "onboarding",
+            "interview",
+            "hr round",
+            "technical round",
+            "aptitude test",
+            "online assessment",
+            "shortlisted",
+            "eligibility criteria",
+            "resume",
+            "accenture",
+            "honeywell",
+            "epsilon",
+            "tcs",
+            "infosys",
+            "wipro",
+            "cognizant",
+            "capgemini",
+            "deloitte",
+            "hcl",
+            "tech mahindra",
             # conditional — score only alongside a PLACEMENT_CONTEXT term
-            "google", "microsoft", "amazon",
+            "google",
+            "microsoft",
+            "amazon",
         ],
         "General College": [
             # athletics / wellness
-            "sport", "sports", "sports day", "sports meet", "tournament",
-            "championship", "match", "athletics", "athletic", "yoga", "wellness",
-            "fitness", "meditation", "zumba", "marathon", "gym",
+            "sport",
+            "sports",
+            "sports day",
+            "sports meet",
+            "tournament",
+            "championship",
+            "match",
+            "athletics",
+            "athletic",
+            "yoga",
+            "wellness",
+            "fitness",
+            "meditation",
+            "zumba",
+            "marathon",
+            "gym",
             # events / culture
-            "event", "events", "competition", "contest", "quiz", "debate",
-            "hackathon", "fest", "festival", "cultural", "celebration",
-            "celebrations", "annual day", "dance", "music", "drama",
-            "prize distribution", "trip", "excursion",
+            "event",
+            "events",
+            "competition",
+            "contest",
+            "quiz",
+            "debate",
+            "hackathon",
+            "fest",
+            "festival",
+            "cultural",
+            "celebration",
+            "celebrations",
+            "annual day",
+            "dance",
+            "music",
+            "drama",
+            "prize distribution",
+            "trip",
+            "excursion",
             # student life / bodies
-            "workshop", "club", "clubs", "society", "student council", "chapter",
-            "ncc", "nss", "blood donation", "volunteer", "volunteers",
-            "alumni meet", "farewell", "freshers", "orientation", "induction",
+            "workshop",
+            "club",
+            "clubs",
+            "society",
+            "student council",
+            "chapter",
+            "ncc",
+            "nss",
+            "blood donation",
+            "volunteer",
+            "volunteers",
+            "alumni meet",
+            "farewell",
+            "freshers",
+            "orientation",
+            "induction",
             "convocation",
             # admin notices
-            "exam", "exams", "schedule", "timetable", "holiday", "notice",
+            "exam",
+            "exams",
+            "schedule",
+            "timetable",
+            "holiday",
+            "notice",
         ],
     },
     # A negative phrase in the SUBJECT vetoes that category outright ("Yoga Competition" is
@@ -146,13 +325,31 @@ DEFAULT_CONFIG = {
     # genuine placement drive that mentions the NSS office in a footer isn't thrown out.
     "category_negative_keywords": {
         "Placements": [
-            "yoga", "meditation", "zumba", "sports day", "sports meet",
-            "annual day", "cultural fest", "farewell", "freshers",
-            "blood donation", "ncc", "nss", "convocation", "marathon",
-            "prize distribution", "republic day", "independence day",
+            "yoga",
+            "meditation",
+            "zumba",
+            "sports day",
+            "sports meet",
+            "annual day",
+            "cultural fest",
+            "farewell",
+            "freshers",
+            "blood donation",
+            "ncc",
+            "nss",
+            "convocation",
+            "marathon",
+            "prize distribution",
+            "republic day",
+            "independence day",
         ],
     },
     "conditional_keywords": {k: list(v) for k, v in DEFAULT_CONDITIONAL_KEYWORDS.items()},
+    # When true, ingest never calls the LLM: classification falls back to pure keyword
+    # scoring (already tolerated by arbitrate_category), and merge/summary/event-extraction
+    # falls back to _offline_merge_or_create_thread. See config_with_settings — this default
+    # is overridden per-user via the mail_settings entity, not by editing this file.
+    "offline_mode": False,
 }
 
 
@@ -198,6 +395,61 @@ def _phrase_hit(keyword: str, zone: str) -> bool:
     """
     tokens = bm25.tokenize(keyword)
     return bool(tokens) and f" {' '.join(tokens)} " in zone
+
+
+# A separate keyword list from category scoring — urgency is a different axis (how soon,
+# not what about), so it needs its own vocabulary and no threshold tuning shared with
+# arbitrate_category's confidence floors.
+URGENCY_PHRASES = [
+    "urgent",
+    "asap",
+    "immediately",
+    "deadline",
+    "final reminder",
+    "last date",
+    "closing soon",
+    "action required",
+    "time-sensitive",
+    "time sensitive",
+    "expires today",
+    "last chance",
+    "respond by",
+    "due today",
+    "due tomorrow",
+]
+
+
+def is_urgent(subject: str, body: str) -> bool:
+    """Deterministic urgency flag — no LLM. A subject hit is dispositive; a body hit is still
+    a signal, since "URGENT" in all-caps subjects is common but not universal."""
+    subject_zone = _normalize_zone(subject)
+    body_zone = _normalize_zone(body)
+    return any(_phrase_hit(p, subject_zone) or _phrase_hit(p, body_zone) for p in URGENCY_PHRASES)
+
+
+# Imperative verb + "by <window>" — matches "submit by Friday", "send it by 5 PM", "reply by
+# tomorrow", "complete this by 10th March". Deliberately narrow (verb-anchored) rather than
+# matching every stray "by" in a sentence, which would flag almost every email.
+_ACTION_ITEM_RE = re.compile(
+    r"\b(submit|send|complete|reply|register|apply|confirm|upload|fill|pay)\b"
+    r"[^.\n]{0,60}?\bby\b[^.\n]{0,30}",
+    re.IGNORECASE,
+)
+
+
+def extract_action_items(body: str) -> list[dict[str, str]]:
+    """Deterministic to-do extraction — no LLM. Each match is one candidate action item; the
+    caller decides what to do with duplicates across merges (see _ingest_message)."""
+    body = body or ""
+    seen: set[str] = set()
+    items: list[dict[str, str]] = []
+    for match in _ACTION_ITEM_RE.finditer(body):
+        text = re.sub(r"\s+", " ", match.group(0)).strip().rstrip(",;")
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            items.append({"text": text})
+    return items
 
 
 def score_categories(
@@ -278,9 +530,7 @@ def sender_precedent(conn: Any, sender: str) -> str | None:
         category = classification.get("category")
         if not category:
             continue
-        votes[category] += (
-            CORRECTION_WEIGHT if classification.get("corrected_by_user") else 1
-        )
+        votes[category] += CORRECTION_WEIGHT if classification.get("corrected_by_user") else 1
     return votes.most_common(1)[0][0] if votes else None
 
 
@@ -383,16 +633,10 @@ def classify_email(
 ) -> dict[str, Any]:
     """LLM call: which category + topic does this email belong to (existing or new)?"""
     cat_lines = (
-        "\n".join(
-            f"- {c['title']}: {c.get('summary', '')}" for c in categories
-        )
-        or "(none yet)"
+        "\n".join(f"- {c['title']}: {c.get('summary', '')}" for c in categories) or "(none yet)"
     )
     findings_text = (
-        "\n".join(
-            f"- {f['file']} ({f['kind']}): {f['finding']}"
-            for f in attachment_findings
-        )
+        "\n".join(f"- {f['file']} ({f['kind']}): {f['finding']}" for f in attachment_findings)
         or "(none)"
     )
     prompt = (
@@ -435,16 +679,11 @@ def merge_or_create_thread(
     call, since the model already has the full email in front of it — extract whether this
     email describes a concrete, dated event worth adding to the user's calendar."""
     thread_lines = (
-        "\n".join(
-            f"- id={t['id']}: {t.get('summary', '')}" for t in existing_threads
-        )
+        "\n".join(f"- id={t['id']}: {t.get('summary', '')}" for t in existing_threads)
         or "(none yet)"
     )
     findings_text = (
-        "\n".join(
-            f"- {f['file']} ({f['kind']}): {f['finding']}"
-            for f in attachment_findings
-        )
+        "\n".join(f"- {f['file']} ({f['kind']}): {f['finding']}" for f in attachment_findings)
         or "(none)"
     )
     prompt = (
@@ -460,6 +699,8 @@ def merge_or_create_thread(
         "Separately, decide whether this email describes something happening at a specific, "
         "concrete date/time — an interview, exam, meeting, deadline, competition, festival, "
         "or similar — as opposed to a vague or ongoing topic with no fixed occurrence. "
+        'Its kind is "deadline" when it\'s something the reader must do or submit by that date '
+        '(a form, fee, registration, assignment, application), otherwise "event". '
         f"REFERENCE DATE (when this email was sent, for resolving 'tomorrow'/'this Friday'): "
         f"{_reference_date(email)}.\n\n"
         f"EXISTING NODES IN THIS TOPIC:\n{thread_lines}\n\n"
@@ -469,7 +710,8 @@ def merge_or_create_thread(
         "Reply with ONLY this JSON object, nothing else:\n"
         '{"action": "merge"|"new", "merge_into_id": "<id or null>", '
         '"summary": "<routing digest, <=120 words>", "body": "<full content>", '
-        '"event": {"has_event": true|false, "title": "<short event title, or empty>", '
+        '"event": {"has_event": true|false, "kind": "deadline"|"event", '
+        '"title": "<short event title, or empty>", '
         '"start": "<YYYY-MM-DD, or YYYY-MM-DDTHH:MM:SS if a specific time is given; '
         'empty if has_event is false>", '
         '"end": "<same format, or empty to default to start + 1 hour>", '
@@ -477,6 +719,79 @@ def merge_or_create_thread(
     )
     raw = _strip_fences(call_openrouter(prompt))
     return json.loads(raw)
+
+
+# A BM25 score this high against an existing thread's summary is treated as "clearly a later
+# round of the same process" — same order of magnitude as mail_ingest's own confidence floors
+# (MIN_ABSOLUTE_SCORE), tuned empirically the same way.
+OFFLINE_MERGE_THRESHOLD = 2.0
+
+# A same-topic candidate whose body text is at least this similar to a new message is treated
+# as the same announcement arriving twice (e.g. via mail and Slack), not a new round — high
+# enough that two genuinely different rounds of the same process ("Round 1"/"Round 2") stay
+# distinct threads, since their bodies differ far more than a verbatim repost does.
+DUPLICATE_SIMILARITY_THRESHOLD = 0.85
+
+
+def _find_duplicate_thread(
+    body_text: str, existing_threads: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """The existing thread (if any) whose body text is a near-duplicate of `body_text`.
+
+    Uses difflib.SequenceMatcher — the same primitive brain/resolver.py already uses for
+    fuzzy matching — rather than the LLM's or BM25's topic-level judgment, since "is this the
+    same announcement" is a finer-grained question than "is this the same topic". Runs before
+    both the LLM and offline merge paths so a duplicate is caught regardless of which one is
+    active (see _ingest_message).
+    """
+    body_text = (body_text or "").strip()
+    if not body_text:
+        return None
+    best_thread, best_ratio = None, 0.0
+    for t in existing_threads:
+        existing_body = (t.get("data", {}).get("body") or "").strip()
+        if not existing_body:
+            continue
+        ratio = difflib.SequenceMatcher(None, body_text, existing_body).ratio()
+        if ratio > best_ratio:
+            best_thread, best_ratio = t, ratio
+    return best_thread if best_ratio >= DUPLICATE_SIMILARITY_THRESHOLD else None
+
+
+def _offline_merge_or_create_thread(
+    email: dict[str, Any], existing_threads: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Non-LLM fallback for merge_or_create_thread, used when offline_mode is on.
+
+    No narrative synthesis is possible without a model, so this is deliberately plainer than
+    the LLM path: body is the raw email text (no folding-in of prior rounds), summary is a
+    truncation of it, and no calendar event is ever extracted (that needs the same synthesis
+    the LLM path provides). The merge decision itself is real, not a stub — it BM25-ranks the
+    new email against existing threads' summaries in this topic, the same primitive
+    brain/mail_ask.py already uses for thread search.
+    """
+    body_text = (email.get("body_text") or "").strip()
+    summary = " ".join(body_text.split()[:30]) or (email.get("subject") or "")
+    event = {"has_event": False, "title": "", "start": "", "end": "", "location": ""}
+
+    if existing_threads:
+        documents = {t["id"]: t.get("summary") or "" for t in existing_threads}
+        ranked = bm25.rank(body_text, documents)
+        if ranked and ranked[0][1] >= OFFLINE_MERGE_THRESHOLD:
+            return {
+                "action": "merge",
+                "merge_into_id": ranked[0][0],
+                "summary": summary,
+                "body": body_text,
+                "event": event,
+            }
+    return {
+        "action": "new",
+        "merge_into_id": None,
+        "summary": summary,
+        "body": body_text,
+        "event": event,
+    }
 
 
 def gather_attachment_findings(
@@ -634,6 +949,47 @@ def config_with_learned(conn: Any, config: dict[str, Any]) -> dict[str, Any]:
     return {**config, "category_keywords": merged}
 
 
+SETTINGS_ID = "mail:settings"
+
+
+def get_settings(conn: Any) -> dict[str, Any]:
+    """This user's saved pipeline settings (currently just offline_mode), as a plain dict."""
+    entity = store.get(conn, SETTINGS_ID)
+    if not entity:
+        return {}
+    return {k: v for k, v in entity["data"].items() if k != "source_id"}
+
+
+def _update_settings(conn: Any, **updates: Any) -> dict[str, Any]:
+    store.upsert(
+        conn,
+        "mail_settings",
+        {"source_id": SETTINGS_ID, **get_settings(conn), **updates},
+        title="Mail settings",
+        summary="Per-user mail pipeline settings.",
+        source="user",
+    )
+    return get_settings(conn)
+
+
+def set_offline_mode(conn: Any, enabled: bool) -> dict[str, Any]:
+    """Persist the offline-mode toggle for this user (brain.db is already per-user)."""
+    return _update_settings(conn, offline_mode=enabled)
+
+
+def set_slack_channel(conn: Any, channel_id: str) -> dict[str, Any]:
+    """Persist which Slack channel /api/slack/reload pulls history from for this user."""
+    return _update_settings(conn, slack_channel_id=channel_id)
+
+
+def config_with_settings(conn: Any, config: dict[str, Any]) -> dict[str, Any]:
+    """`config` with this user's saved settings overriding the file-based defaults."""
+    settings = get_settings(conn)
+    if "offline_mode" not in settings:
+        return config
+    return {**config, "offline_mode": bool(settings["offline_mode"])}
+
+
 def cached_attachments_for(uids: list[str]) -> list[Path]:
     """The still-on-disk attachment files belonging to these source uids.
 
@@ -665,6 +1021,7 @@ def rescan_attachments(conn: Any, config: dict[str, Any]) -> list[dict[str, Any]
         paths = cached_attachments_for([str(u) for u in (data.get("source_uids") or [])])
         if not paths:
             continue
+
         # Compare the whole finding, not just the identifier hits: a file can go from
         # "attachment not parsed" to a fully transcribed menu without ever naming the user,
         # and that is exactly the change worth persisting.
@@ -777,20 +1134,45 @@ def _create_calendar_event_for_thread(
 def ingest_email(
     conn: Any, email: dict[str, Any], config: dict[str, Any], user_id: str | int | None = None
 ) -> dict[str, Any]:
-    """Full per-email pipeline: attachments -> classify -> merge/place -> store.
+    """Ingest one Gmail message. Thin adapter over `_ingest_message` — see that function for
+    the actual pipeline, which is channel-agnostic (Slack messages ride the same code, see
+    brain/slack_ingest.py)."""
+    return _ingest_message(conn, email, config, user_id, channel="gmail")
 
-    No mark-read here.
+
+def _ingest_message(
+    conn: Any,
+    message: dict[str, Any],
+    config: dict[str, Any],
+    user_id: str | int | None = None,
+    *,
+    channel: str = "gmail",
+) -> dict[str, Any]:
+    """Full per-message pipeline: attachments -> classify -> merge/place -> store.
+
+    `message` is channel-agnostic: `{uid, from, subject, body_text, date, attachments}`.
+    Nothing below branches on where it came from — classification, merging, and topic
+    assignment all key off the same category/topic vocabulary regardless of `channel`, which
+    is precisely what lets a Slack message and a Gmail thread about the same subject land
+    under the same topic node (existing_threads below is queried by topic membership only,
+    with no channel filter).
+
+    No mark-read here — that's channel-specific and stays the caller's job.
     """
     # Attachment identifiers come from the user's stored profile ("About you"), so adding your
     # name there is enough — no config file to edit. Anything in config is kept as a fallback.
-    config = {
-        **config,
-        "identifiers": [
-            *(config.get("identifiers") or []),
-            *profile.identifiers_from_profile(profile.load_profile(conn)),
-        ],
-    }
-    findings = gather_attachment_findings(email, config)
+    config = config_with_settings(
+        conn,
+        {
+            **config,
+            "identifiers": [
+                *(config.get("identifiers") or []),
+                *profile.identifiers_from_profile(profile.load_profile(conn)),
+            ],
+        },
+    )
+    offline = bool(config.get("offline_mode"))
+    findings = gather_attachment_findings(message, config)
 
     stored_categories = store.all_of_type(conn, "mail_category")
     seeded_names = {c["title"] for c in stored_categories}
@@ -799,22 +1181,24 @@ def ingest_email(
         for name in config.get("seeded_categories", [])
         if name not in seeded_names
     ]
-    classification = classify_email(email, findings, categories)
+    # Offline mode skips the LLM call entirely — arbitrate_category already tolerates a blank
+    # llm_category (falls back to the top keyword score, or "low" confidence with none).
+    classification = {} if offline else classify_email(message, findings, categories)
 
-    subject = email.get("subject", "") or ""
+    subject = message.get("subject", "") or ""
     llm_category = (classification.get("category") or "").strip()
     # Fold in whatever this user has taught the classifier by correcting past mail.
     ranked = score_categories(
         subject,
-        email.get("body_text", "") or "",
-        email.get("from", "") or "",
+        message.get("body_text", "") or "",
+        message.get("from", "") or "",
         config_with_learned(conn, config),
     )
     cat_title, confidence = arbitrate_category(
         llm_category,
         ranked,
         {c["title"] for c in categories},
-        sender_category=sender_precedent(conn, email.get("from", "") or ""),
+        sender_category=sender_precedent(conn, message.get("from", "") or ""),
     )
     classification["category"] = cat_title
 
@@ -827,39 +1211,59 @@ def ingest_email(
     classification["topic"] = topic_title
     topic_id = ensure_topic(conn, cat_title, topic_title)
 
+    # No channel filter here — this is what lets a Slack message and a Gmail thread about the
+    # same subject land in the same merge-candidate pool (see the docstring above).
     existing_threads = [
         t
         for t in store.all_of_type(conn, "mail_thread")
         if any(
-            n["id"] == topic_id
-            for n in store.neighbors(conn, t["id"], "contains", incoming=True)
+            n["id"] == topic_id for n in store.neighbors(conn, t["id"], "contains", incoming=True)
         )
     ]
-    decision = merge_or_create_thread(email, findings, existing_threads)
+    duplicate_thread = _find_duplicate_thread(message.get("body_text", "") or "", existing_threads)
+    if duplicate_thread:
+        # Same announcement, second copy (e.g. mail + Slack) — collapse into the existing
+        # thread untouched rather than treating it as a new round or a fresh thread.
+        decision = {
+            "action": "duplicate",
+            "merge_into_id": duplicate_thread["id"],
+            "summary": duplicate_thread.get("summary") or "",
+            "body": duplicate_thread.get("data", {}).get("body") or "",
+            "event": {"has_event": False, "title": "", "start": "", "end": "", "location": ""},
+        }
+    else:
+        decision = (
+            _offline_merge_or_create_thread(message, existing_threads)
+            if offline
+            else merge_or_create_thread(message, findings, existing_threads)
+        )
 
     # Validate against every real thread, not just this topic's existing_threads: a merge target
     # from a different topic is legitimate (reclassification), a fully hallucinated id is not.
     valid_thread_ids = {t["id"] for t in store.all_of_type(conn, "mail_thread")}
-    if decision["action"] == "merge" and decision.get("merge_into_id") in valid_thread_ids:
+    merges = decision["action"] in ("merge", "duplicate")
+    if merges and decision.get("merge_into_id") in valid_thread_ids:
         thread_id = decision["merge_into_id"]
         existing_thread = store.get(conn, thread_id)
-        prior_uids = (
-            existing_thread["data"].get("source_uids", [])
-            if existing_thread
-            else []
-        )
-        uids = sorted({*prior_uids, email["uid"]})
-        title = existing_thread["title"] if existing_thread else email.get("subject", "")
+        prior_uids = existing_thread["data"].get("source_uids", []) if existing_thread else []
+        uids = sorted({*prior_uids, message["uid"]})
+        title = existing_thread["title"] if existing_thread else message.get("subject", "")
         source = ",".join(f"mail:{u}" for u in uids)
     else:
         existing_thread = None
-        thread_id = f"mail:thread:{email['uid']}"
-        uids = [email["uid"]]
-        title = email.get("subject", "")
-        source = f"mail:{email['uid']}"
+        # Gmail keeps its historical id shape (untouched, so existing data/tests still match);
+        # every other channel is namespaced to avoid a uid collision across channels.
+        thread_id = (
+            f"mail:thread:{message['uid']}"
+            if channel == "gmail"
+            else f"mail:thread:{channel}:{message['uid']}"
+        )
+        uids = [message["uid"]]
+        title = message.get("subject", "")
+        source = f"mail:{message['uid']}"
 
     # A thread the user has re-filed by hand stays where they put it. Without this, the next
-    # email in that thread is scored afresh and reparent_thread drags the whole thread back —
+    # message in that thread is scored afresh and reparent_thread drags the whole thread back —
     # silently undoing the correction.
     prior = (existing_thread or {}).get("data", {}).get("classification") or {}
     if prior.get("corrected_by_user") and prior.get("category"):
@@ -872,14 +1276,39 @@ def ingest_email(
         classification["topic"] = topic_title
 
     prior_calendar_events = (existing_thread or {}).get("data", {}).get("calendar_events", [])
-    # Guard against double-booking the same email (e.g. a retried ingest after a mark-read
+    # Guard against double-booking the same message (e.g. a retried ingest after a mark-read
     # failure on the previous attempt) — never a new API call for a uid already handled.
     created_event = None
-    if not any(e.get("source_uid") == email["uid"] for e in prior_calendar_events):
+    if not any(e.get("source_uid") == message["uid"] for e in prior_calendar_events):
         created_event = _create_calendar_event_for_thread(
-            decision.get("event") or {}, email["uid"], user_id
+            decision.get("event") or {}, message["uid"], user_id
         )
     calendar_events = [*prior_calendar_events, *([created_event] if created_event else [])]
+
+    # Both deterministic, no LLM — computed on every message so a thread's urgency reflects
+    # its most recent round (a "final reminder" reply should re-flag an otherwise-quiet
+    # thread), while action items accumulate across merges instead of only keeping the latest.
+    urgent = is_urgent(subject, message.get("body_text", "") or "") or bool(
+        (existing_thread or {}).get("data", {}).get("urgent")
+    )
+    prior_action_items = (existing_thread or {}).get("data", {}).get("action_items", [])
+    new_action_items = extract_action_items(message.get("body_text", "") or "")
+    seen_texts = {item["text"].lower() for item in prior_action_items}
+    action_items = prior_action_items + [
+        item for item in new_action_items if item["text"].lower() not in seen_texts
+    ]
+    # A thread from before dates were recorded gets its earlier emails stamped with the row's
+    # created_at, so first_received stays roughly right instead of jumping to this email.
+    prior_received = (existing_thread or {}).get("data", {}).get("received_at")
+    if prior_received is None and existing_thread and existing_thread.get("created_at"):
+        prior_received = {
+            u: existing_thread["created_at"] for u in existing_thread["data"].get("source_uids", [])
+        }
+    received_at = mail_timeline.merge_received(prior_received, message["uid"], message.get("date"))
+    events = mail_timeline.merge_events(
+        mail_timeline.thread_timeline(existing_thread)["events"] if existing_thread else [],
+        mail_timeline.normalize_event(decision.get("event"), message["uid"]),
+    )
 
     store.upsert(
         conn,
@@ -889,16 +1318,27 @@ def ingest_email(
             "title": title,
             "body": decision["body"],
             "source_uids": uids,
+            # Which channel this thread's most recent message arrived on — a thread that's
+            # merged across channels keeps whichever channel ingested last, which is fine
+            # since it's display metadata (a badge), not used for any routing decision.
+            "channel": channel,
             # Kept so later mail from the same sender can be filed consistently
             # (see sender_precedent).
-            "sender": email.get("from", "") or "",
+            "sender": message.get("from", "") or "",
             # Attachment findings used to be handed to the ingest-time prompts and thrown
             # away, so nothing downstream could answer "was I named in that spreadsheet?".
             # Persisting them is what makes attachments visible to mail Q&A.
             "attachments": _merge_attachments(existing_thread, findings),
-            # Google Calendar events auto-created from this thread's emails — kept so a repeat
-            # ingest doesn't double-book, and so the UI's Undo can find the event id later.
+            # Google Calendar events auto-created from this thread's messages — kept so a
+            # repeat ingest doesn't double-book, and so the UI's Undo can find the event id.
             "calendar_events": calendar_events,
+            # Deterministic "needs attention" signal (GET /api/needs-attention) and a unified
+            # to-do list (GET /api/action-items) — both computed with zero LLM cost.
+            "urgent": urgent,
+            "action_items": action_items,
+            # When each email arrived, and the dates they mention — see brain/mail_timeline.py.
+            "received_at": received_at,
+            "events": events,
             # Provenance for the UI and for debugging a wrong call: what each half of the
             # classifier thought, and how sure the combination was.
             "classification": {
@@ -907,7 +1347,7 @@ def ingest_email(
                 "llm_category": llm_category or None,
                 "keyword_category": ranked[0][0] if ranked else None,
                 "scores": {name: round(score, 2) for name, score in ranked[:3]},
-                # Carried forward so the pin survives every later email in this thread.
+                # Carried forward so the pin survives every later message in this thread.
                 **(
                     {"corrected_by_user": True, "auto_category": prior.get("auto_category")}
                     if prior.get("corrected_by_user")
@@ -923,13 +1363,23 @@ def ingest_email(
     reparent_thread(conn, thread_id, topic_id)
     store.add_edge(conn, topic_id, thread_id, "contains")
 
+    try:
+        # Best-effort: a flaky Slack post must not fail the whole ingest, same rationale as
+        # the calendar-event creation above.
+        automation.evaluate_and_notify(
+            conn, category=cat_title, urgent=urgent, title=title, channel=channel
+        )
+    except Exception:
+        pass
+
     return {
-        "uid": email["uid"],
+        "uid": message["uid"],
         "category": cat_title,
         "topic": topic_title,
         "thread_id": thread_id,
         "action": decision["action"],
         "confidence": confidence,
+        "channel": channel,
         "calendar_event": {**created_event, "thread_id": thread_id} if created_event else None,
     }
 
@@ -953,7 +1403,10 @@ def fetch_unread_emails(
         cmd += ["--user-id", str(user_id)]
     proc = subprocess.run(
         cmd,
-        capture_output=True, text=True, encoding="utf-8", timeout=600,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=600,
     )
     if proc.returncode != 0:
         raise SystemExit(f"emailtool.py list failed: {proc.stderr.strip()}")
@@ -967,7 +1420,10 @@ def mark_email_read(uid: str, user_id: str | int | None = None) -> None:
         cmd += ["--user-id", str(user_id)]
     proc = subprocess.run(
         cmd,
-        capture_output=True, text=True, encoding="utf-8", timeout=60,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
     )
     if proc.returncode != 0:
         raise SystemExit(f"emailtool.py mark-read failed: {proc.stderr.strip()}")
@@ -989,10 +1445,6 @@ def run_iter(
     """
     conn = conn or store.connect(user_id=user_id)
     config = load_config()
-    if config.get("resume_path"):
-        from tools.resume.parser import parse_resume
-
-        config["resume_profile"] = parse_resume(Path(config["resume_path"]))
 
     yield {"stage": "connecting"}
     emails = fetch_unread_emails(since_minutes, user_id=user_id)
@@ -1010,8 +1462,13 @@ def run_iter(
         except (Exception, SystemExit) as exc:  # one bad email must not stop the whole run
             result = {"uid": email.get("uid"), "error": str(exc)}
             results.append(result)
-            yield {"stage": "ingested", "done": index, "total": total, "subject": subject,
-                   "error": str(exc)}
+            yield {
+                "stage": "ingested",
+                "done": index,
+                "total": total,
+                "subject": subject,
+                "error": str(exc),
+            }
             continue
         results.append(result)
         yield {
@@ -1060,10 +1517,7 @@ def main() -> None:
             print(f"[error] uid {result['uid']}: {result['error']}")
         else:
             tid = result["thread_id"]
-            print(
-                f"[{result['action']}] {result['category']} / "
-                f"{result['topic']} -> {tid}"
-            )
+            print(f"[{result['action']}] {result['category']} / {result['topic']} -> {tid}")
 
 
 if __name__ == "__main__":

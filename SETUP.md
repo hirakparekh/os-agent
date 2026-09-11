@@ -156,7 +156,7 @@ npm run dev
 > plainly, as above.
 
 **Verify:**
-- `curl http://localhost:8080/` responds (the legacy mail-tree debug page), not connection-refused.
+- `curl http://localhost:8080/` responds with `{"service":"brain","status":"ok"}`, not connection-refused.
 - `curl http://localhost:8000/health` responds with a JSON integrations status.
 - Opening `http://localhost:5173` in a browser shows a real login screen, not a demo-mode banner.
 
@@ -164,10 +164,11 @@ npm run dev
 
 1. Open `http://localhost:5173`, log in with `OPS_ADMIN_EMAIL` / `OPS_ADMIN_PASSWORD` from §3.
 2. Go to the **Integrations** (Applications) tab → **Connect** next to Gmail.
-3. This triggers a one-time Google OAuth consent — a browser window opens on **the machine
-   running the brain process** (not a redirect inside the web app) because the flow runs a local
-   OAuth callback server server-side. Approve it with the Google account you want to ingest mail
-   from.
+3. A new tab opens Google's consent screen in **your own browser**. Approve it with the Google
+   account you want to ingest mail from, then return to the Agent OS tab — it polls and flips to
+   "Connected" on its own. Google redirects back to the brain service
+   (`/api/oauth/callback`), which does the code exchange server-side; nothing is opened on the
+   server and the request never blocks.
 4. On first-ever use of Gmail OAuth in this repo, you also need an OAuth **client** registered
    with Google (a one-time project-level setup, not per-user):
    - [Google Cloud Console](https://console.cloud.google.com) → **New Project** → any name.
@@ -178,10 +179,20 @@ npm run dev
    - **Test users** → add the Gmail account(s) you'll actually connect — skipping this gives
      `access_denied` at consent with no useful explanation.
    - **Credentials → Create Credentials → OAuth client ID → Desktop app** → download the JSON.
+     A Desktop client accepts loopback redirects on any port and path, so the default
+     `http://localhost:8080/api/oauth/callback` works with no extra registration.
    - Save it at `~/.hermes/mail/credentials.json` (or set `GMAIL_CREDENTIALS_PATH` in `.env` to
      wherever you saved it).
+   - **Hosting this anywhere other than localhost?** Create a **Web application** client instead
+     and register your public callback URL verbatim, then set `OAUTH_REDIRECT_BASE_URL` (§3) to
+     that origin. A Desktop client's loopback allowance does not extend to a real domain.
 5. Each teammate/account gets their **own** OAuth token and their own private mail tree — this
    step is per-user, done once per Google account you connect.
+6. **Expect to reconnect about weekly.** This app requests `https://mail.google.com/`, a
+   *restricted* scope, and is unverified — so Google expires its refresh tokens after 7 days.
+   That is normal here, not a fault: status will report `needs_reconnect`, and the Integrations
+   tab offers Connect again. Reconnect deliberately before any demo, because an expired grant
+   looks exactly like an empty inbox.
 
 **Verify:** the Integrations tab shows Gmail as connected, and/or
 `curl http://localhost:8080/api/mail/status -H "Authorization: Bearer <token from login>"`

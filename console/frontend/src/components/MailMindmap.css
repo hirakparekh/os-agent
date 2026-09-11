@@ -92,13 +92,207 @@
   stroke-width: 1.6px;
 }
 
-.mail-mindmap-hint {
+.mail-mindmap-root .node text.meta {
+  fill: var(--mm-muted);
+  font-size: 11px;
+}
+.mail-mindmap-root .node text.meta.status-overdue {
+  fill: #ef4444;
+}
+.mail-mindmap-root .node text.meta.status-soon {
+  fill: #d97706;
+}
+.dark .mail-mindmap-root .node text.meta.status-soon {
+  fill: #fbbf24;
+}
+.mail-mindmap-root .node text.meta.status-upcoming {
+  fill: #3b82f6;
+}
+.dark .mail-mindmap-root .node text.meta.status-upcoming {
+  fill: #93c5fd;
+}
+.mail-mindmap-root .node.time_bucket rect {
+  fill: var(--mm-panel);
+  stroke: var(--mm-line);
+  stroke-dasharray: 4 3;
+}
+.mail-mindmap-root .node.time_bucket text.title {
+  font-weight: 600;
+}
+.mail-mindmap-chart .node circle.cat-dot {
+  stroke: none;
+}
+.mail-mindmap-chart .node circle.new-dot {
+  fill: var(--mm-accent);
+  stroke: var(--mm-panel);
+  stroke-width: 1.5px;
+}
+
+/* Toolbar: view switch, filter chips and search, floating over the canvas. */
+.mail-mindmap-toolbar {
   position: absolute;
-  bottom: 12px;
-  left: 16px;
+  top: 10px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  z-index: 6;
+  pointer-events: none;
+}
+.mail-mindmap-toolbar > * {
+  pointer-events: auto;
+}
+.mail-mindmap-toolbar .seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--mm-panel);
+  border: 1px solid var(--mm-line);
+  border-radius: 999px;
+}
+.mail-mindmap-toolbar .seg button {
+  border: none;
+  background: transparent;
+  color: var(--mm-muted);
+  font-size: 12.5px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.mail-mindmap-toolbar .seg button[aria-pressed="true"] {
+  background: var(--mm-panel2);
+  color: var(--mm-ink);
+  font-weight: 600;
+}
+.mail-mindmap-toolbar .chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mail-mindmap-toolbar .chip {
+  background: var(--mm-panel);
+  border: 1px solid var(--mm-line);
   color: var(--mm-muted);
   font-size: 12px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.mail-mindmap-toolbar .chip:hover {
+  color: var(--mm-ink);
+}
+.mail-mindmap-toolbar .chip[aria-pressed="true"] {
+  color: var(--mm-ink);
+  border-color: var(--mm-accent);
+  background: var(--mm-panel2);
+}
+.mail-mindmap-toolbar .chip-overdue[aria-pressed="true"] {
+  border-color: #ef4444;
+}
+.mail-mindmap-toolbar .chip-week[aria-pressed="true"] {
+  border-color: #f59e0b;
+}
+.mail-mindmap-toolbar .chip-upcoming[aria-pressed="true"] {
+  border-color: #3b82f6;
+}
+.mail-mindmap-toolbar .search {
+  margin-left: auto;
+  width: 190px;
+  max-width: 100%;
+  background: var(--mm-panel);
+  border: 1px solid var(--mm-line);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12.5px;
+  color: var(--mm-ink);
+  outline: none;
+}
+.mail-mindmap-toolbar .search:focus {
+  border-color: var(--mm-accent);
+}
+.mail-mindmap-toolbar .search::placeholder {
+  color: var(--mm-muted);
+}
+
+.mail-mindmap-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mm-muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.mail-mindmap-legend {
+  position: absolute;
+  bottom: 10px;
+  left: 14px;
+  right: 40%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--mm-muted);
+  font-size: 11.5px;
   z-index: 5;
+  pointer-events: none;
+}
+.mail-mindmap-legend .item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.mail-mindmap-legend .ring {
+  width: 11px;
+  height: 11px;
+  border-radius: 4px;
+  border: 2px solid;
+}
+.mail-mindmap-legend .dot,
+.mail-mindmap-legend .new {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+.mail-mindmap-legend .new {
+  background: var(--mm-accent);
+}
+
+.mail-mindmap-counts {
+  position: absolute;
+  bottom: 10px;
+  right: 16px;
+  font-size: 12px;
+  color: var(--mm-muted);
+  z-index: 5;
+  text-align: right;
+}
+.mail-mindmap-counts b {
+  color: var(--mm-ink);
+}
+
+.mail-mindmap-download {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 5;
+  background: var(--mm-panel);
+  color: var(--mm-ink);
+  border: 1px solid var(--mm-line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.mail-mindmap-download:hover {
+  border-color: var(--mm-accent);
+  color: var(--mm-accent);
 }
 
 .mail-mindmap-detail {
@@ -232,6 +426,46 @@
 .mail-mindmap-chart .node circle.review-flag {
   fill: #f59e0b;
   stroke: none;
+}
+
+/* Dates in the detail panel: one row per deadline/event, status chip first. */
+.mail-mindmap-detail .events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mail-mindmap-detail .events li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.mail-mindmap-detail .status-chip {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--mm-line);
+  color: var(--mm-muted);
+  white-space: nowrap;
+}
+.mail-mindmap-detail .event-text {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.mail-mindmap-detail .event-text span {
+  color: var(--mm-muted);
+  font-size: 12px;
+}
+.mail-mindmap-detail .received,
+.mail-mindmap-detail .muted {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--mm-muted);
 }
 
 /* "Ask about this" — sits beside the close button in the detail panel header. */

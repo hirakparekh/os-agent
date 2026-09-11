@@ -55,31 +55,19 @@ filterwarnings = [
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["tools", "clickup", "skills", "scripts", "console"]
+files = ["scripts", "console"]
 
 [tool.importlinter]
-root_packages = ["tools", "clickup", "skills", "console", "security", "brain"]
+root_packages = ["console", "security", "brain"]
 
 [[tool.importlinter.contracts]]
-name = "Fathom tool must not import ClickUp (ADR-0001)"
+name = "The brain must not import the console (ADR-0002)"
 type = "forbidden"
-source_modules = ["tools.fathom"]
-forbidden_modules = ["clickup"]
-
-[[tool.importlinter.contracts]]
-name = "Tools must not import skills (ADR-0001)"
-type = "forbidden"
-source_modules = ["tools"]
-forbidden_modules = ["skills"]
-
-[[tool.importlinter.contracts]]
-name = "Core packages must not import the console (ADR-0002)"
-type = "forbidden"
-source_modules = ["clickup", "tools", "skills", "brain"]
+source_modules = ["brain"]
 forbidden_modules = ["console"]
 
 [[tool.importlinter.contracts]]
 name = "security is a shared leaf module — it must not import any other project package"
 type = "forbidden"
 source_modules = ["security"]
-forbidden_modules = ["tools", "clickup", "skills", "console", "brain"]
+forbidden_modules = ["console", "brain"]

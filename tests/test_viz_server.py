@@ -1,7 +1,7 @@
 """Tests for the brain's HTTP surface: auth gating, the review queue, and reclassification.
 
 The per-user SQLite connection is injected via FastAPI's dependency_overrides so each test gets
-its own throwaway database, mirroring how console/backend's tests fake ClickUp.
+its own throwaway database.
 """
 
 import json
@@ -65,7 +65,10 @@ def test_endpoints_require_authentication():
 def test_review_lists_only_low_confidence_threads(client, conn):
     topic = mail_ingest.ensure_topic(conn, "Placements", "Yoga Competition")
     _thread(
-        conn, "mail:thread:1", "Yoga Competition 2026", topic,
+        conn,
+        "mail:thread:1",
+        "Yoga Competition 2026",
+        topic,
         needs_review=True,
         classification={"llm_category": "Placements", "keyword_category": "General College"},
     )
@@ -198,22 +201,40 @@ def _stream_events(res):
 
 def test_reload_stream_emits_progress_per_email(client, monkeypatch):
     emails = [
-        {"uid": "1", "from": "a@b.com", "to": "me@x.com", "subject": "Accenture drive",
-         "body_text": "...", "attachments": []},
-        {"uid": "2", "from": "a@b.com", "to": "me@x.com", "subject": "Yoga day",
-         "body_text": "...", "attachments": []},
+        {
+            "uid": "1",
+            "from": "a@b.com",
+            "to": "me@x.com",
+            "subject": "Accenture drive",
+            "body_text": "...",
+            "attachments": [],
+        },
+        {
+            "uid": "2",
+            "from": "a@b.com",
+            "to": "me@x.com",
+            "subject": "Yoga day",
+            "body_text": "...",
+            "attachments": [],
+        },
     ]
     monkeypatch.setattr(
         mail_ingest, "fetch_unread_emails", lambda since_minutes=None, user_id=None: emails
     )
     monkeypatch.setattr(mail_ingest, "mark_email_read", lambda uid, user_id=None: None)
     monkeypatch.setattr(
-        mail_ingest, "classify_email",
-        lambda e, f, c: {"category": "Placements", "new_category": True,
-                         "topic": "T", "new_topic": True},
+        mail_ingest,
+        "classify_email",
+        lambda e, f, c: {
+            "category": "Placements",
+            "new_category": True,
+            "topic": "T",
+            "new_topic": True,
+        },
     )
     monkeypatch.setattr(
-        mail_ingest, "merge_or_create_thread",
+        mail_ingest,
+        "merge_or_create_thread",
         lambda e, f, x: {"action": "new", "merge_into_id": None, "summary": "s", "body": "b"},
     )
 
@@ -232,6 +253,7 @@ def test_reload_stream_emits_progress_per_email(client, monkeypatch):
 def test_reload_stream_reports_failure_as_a_terminal_event(client, monkeypatch):
     """The response is already 200 by the time a mid-stream failure happens, so the error has
     to travel in-band rather than as a status code."""
+
     def _boom(since_minutes=None, user_id=None):
         raise SystemExit("emailtool.py list failed: no mailbox connected")
 
@@ -248,3 +270,221 @@ def test_reload_stream_requires_authentication():
     with TestClient(viz_server.app) as anonymous:
         res = anonymous.post("/api/mail/reload/stream", json={"since_minutes": 60})
         assert res.status_code == 401
+
+
+def test_needs_attention_lists_only_urgent_threads(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    store.upsert(
+        conn,
+        "mail_thread",
+        {
+            "source_id": "mail:thread:1",
+            "title": "Urgent!",
+            "body": "b",
+            "source_uids": ["1"],
+            "urgent": True,
+        },
+        title="Urgent!",
+        summary="s",
+        source="mail",
+    )
+    store.add_edge(conn, topic, "mail:thread:1", "contains")
+    store.upsert(
+        conn,
+        "mail_thread",
+        {
+            "source_id": "mail:thread:2",
+            "title": "Calm",
+            "body": "b",
+            "source_uids": ["2"],
+            "urgent": False,
+        },
+        title="Calm",
+        summary="s",
+        source="mail",
+    )
+    store.add_edge(conn, topic, "mail:thread:2", "contains")
+
+    res = client.get("/api/needs-attention")
+    assert res.status_code == 200
+    names = [t["name"] for t in res.json()["threads"]]
+    assert names == ["Urgent!"]
+
+
+def test_action_items_flattens_across_threads(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    store.upsert(
+        conn,
+        "mail_thread",
+        {
+            "source_id": "mail:thread:1",
+            "title": "T1",
+            "body": "b",
+            "source_uids": ["1"],
+            "action_items": [{"text": "submit resume by Friday"}],
+        },
+        title="T1",
+        summary="s",
+        source="mail",
+    )
+    store.add_edge(conn, topic, "mail:thread:1", "contains")
+
+    res = client.get("/api/action-items")
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert len(items) == 1
+    assert items[0]["text"] == "submit resume by Friday"
+    assert items[0]["thread_id"] == "mail:thread:1"
+
+
+def test_analytics_category_volume_buckets_by_day(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    store.upsert(
+        conn,
+        "mail_thread",
+        {"source_id": "mail:thread:1", "title": "T1", "body": "b", "source_uids": ["1"]},
+        title="T1",
+        summary="s",
+        source="mail",
+    )
+    store.add_edge(conn, topic, "mail:thread:1", "contains")
+
+    res = client.get("/api/analytics/category-volume")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["bucket"] == "day"
+    assert len(body["points"]) == 1
+    point = body["points"][0]
+    assert point["category"] == "Placements"
+    assert point["count"] == 1
+
+
+def test_analytics_category_volume_rejects_an_invalid_bucket(client):
+    res = client.get("/api/analytics/category-volume?bucket=month")
+    assert res.status_code == 400
+
+
+def test_mail_tree_export_renders_markdown_with_category_topic_and_thread(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    store.upsert(
+        conn,
+        "mail_thread",
+        {
+            "source_id": "mail:thread:1",
+            "title": "Interview shortlist",
+            "body": "b",
+            "source_uids": ["1"],
+            "channel": "slack",
+        },
+        title="Interview shortlist",
+        summary="Shortlisted for round 1.",
+        source="mail",
+    )
+    store.add_edge(conn, topic, "mail:thread:1", "contains")
+
+    res = client.get("/api/mail_tree/export")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("text/markdown")
+    assert 'filename="knowledge-tree.md"' in res.headers["content-disposition"]
+
+    text = res.text
+    assert "## Placements" in text
+    assert "### Accenture" in text
+    assert "Interview shortlist" in text
+    assert "Shortlisted for round 1." in text
+
+
+def test_mail_tree_export_requires_authentication():
+    with TestClient(viz_server.app) as anonymous:
+        assert anonymous.get("/api/mail_tree/export").status_code == 401
+
+
+def _touch(conn, thread_id, *, created_at, updated_at):
+    """Force a thread's timestamps — the pipeline sets them, so tests must forge them to
+    exercise time filtering deterministically."""
+    conn.execute(
+        "UPDATE entities SET created_at = ?, updated_at = ? WHERE id = ?",
+        (created_at, updated_at, thread_id),
+    )
+    conn.commit()
+
+
+def _urgent_thread(conn, thread_id, title, topic_id, *, action_text="submit form by Friday"):
+    store.upsert(
+        conn,
+        "mail_thread",
+        {
+            "source_id": thread_id,
+            "title": title,
+            "body": "b",
+            "source_uids": [thread_id[-1]],
+            "urgent": True,
+            "action_items": [{"text": action_text}],
+        },
+        title=title,
+        summary="s",
+        source="mail",
+    )
+    store.add_edge(conn, topic_id, thread_id, "contains")
+
+
+def test_needs_attention_since_filters_on_update_time(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    _urgent_thread(conn, "mail:thread:1", "Old and quiet", topic)
+    _urgent_thread(conn, "mail:thread:2", "Just became urgent", topic)
+    _touch(
+        conn,
+        "mail:thread:1",
+        created_at="2026-09-01T00:00:00+00:00",
+        updated_at="2026-09-01T00:00:00+00:00",
+    )
+    # Created long ago but touched just now — exactly the case a poller must still catch.
+    _touch(
+        conn,
+        "mail:thread:2",
+        created_at="2026-09-01T00:00:00+00:00",
+        updated_at="2026-09-10T12:00:00+00:00",
+    )
+
+    everything = client.get("/api/needs-attention").json()["threads"]
+    assert {t["name"] for t in everything} == {"Old and quiet", "Just became urgent"}
+
+    recent = client.get("/api/needs-attention?since=2026-09-05T00:00:00+00:00").json()["threads"]
+    assert [t["name"] for t in recent] == ["Just became urgent"]
+
+
+def test_action_items_since_filters_the_same_way(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    _urgent_thread(conn, "mail:thread:1", "Old", topic, action_text="submit old form by Friday")
+    _urgent_thread(conn, "mail:thread:2", "New", topic, action_text="reply by Wednesday")
+    _touch(
+        conn,
+        "mail:thread:1",
+        created_at="2026-09-01T00:00:00+00:00",
+        updated_at="2026-09-01T00:00:00+00:00",
+    )
+    _touch(
+        conn,
+        "mail:thread:2",
+        created_at="2026-09-01T00:00:00+00:00",
+        updated_at="2026-09-10T12:00:00+00:00",
+    )
+
+    assert len(client.get("/api/action-items").json()["items"]) == 2
+    recent = client.get("/api/action-items?since=2026-09-05T00:00:00+00:00").json()["items"]
+    assert [i["text"] for i in recent] == ["reply by Wednesday"]
+
+
+def test_since_is_optional_so_existing_callers_are_unaffected(client, conn):
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    _urgent_thread(conn, "mail:thread:1", "Anything", topic)
+    assert len(client.get("/api/needs-attention").json()["threads"]) == 1
+    assert len(client.get("/api/action-items").json()["items"]) == 1
+
+
+def test_feeds_expose_updated_at_for_client_side_cursors(client, conn):
+    """The poller needs a value it can send back as `since` next time."""
+    topic = mail_ingest.ensure_topic(conn, "Placements", "Accenture")
+    _urgent_thread(conn, "mail:thread:1", "Anything", topic)
+    assert client.get("/api/needs-attention").json()["threads"][0]["updated_at"]
+    assert client.get("/api/action-items").json()["items"][0]["updated_at"]

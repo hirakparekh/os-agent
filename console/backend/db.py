@@ -55,4 +55,3 @@ def seed_admin(settings: Settings) -> None:
                 )
             )
             db.commit()
-

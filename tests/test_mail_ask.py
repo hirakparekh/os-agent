@@ -11,17 +11,28 @@ def _seed_thread(conn, cat_title, topic_title, thread_id, title, summary, body):
     cat_id = f"mail:cat:{cat_title.lower()}"
     topic_id = f"mail:topic:{cat_title.lower()}:{topic_title.lower()}"
     store.upsert(
-        conn, "mail_category", {"source_id": cat_id, "title": cat_title},
-        title=cat_title, summary=f"Mail about {cat_title}.", source="mail",
+        conn,
+        "mail_category",
+        {"source_id": cat_id, "title": cat_title},
+        title=cat_title,
+        summary=f"Mail about {cat_title}.",
+        source="mail",
     )
     store.upsert(
-        conn, "mail_topic", {"source_id": topic_id, "title": topic_title},
-        title=topic_title, summary=f"Mail about {topic_title}.", source="mail",
+        conn,
+        "mail_topic",
+        {"source_id": topic_id, "title": topic_title},
+        title=topic_title,
+        summary=f"Mail about {topic_title}.",
+        source="mail",
     )
     store.upsert(
-        conn, "mail_thread",
+        conn,
+        "mail_thread",
         {"source_id": thread_id, "title": title, "body": body, "source_uids": ["1"]},
-        title=title, summary=summary, source="mail:1",
+        title=title,
+        summary=summary,
+        source="mail:1",
     )
     store.add_edge(conn, cat_id, topic_id, "contains")
     store.add_edge(conn, topic_id, thread_id, "contains")
@@ -41,13 +52,21 @@ def test_ask_mail_empty_tree_returns_canned_message_without_calling_llm(tmp_path
 def test_ask_mail_includes_matching_thread_body_in_prompt(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     _seed_thread(
-        conn, "Placements", "Acme", "mail:thread:1",
-        "Interview Round 1", "Interview scheduled Monday.",
+        conn,
+        "Placements",
+        "Acme",
+        "mail:thread:1",
+        "Interview Round 1",
+        "Interview scheduled Monday.",
         "Please join the interview call on Monday at 10am.",
     )
     _seed_thread(
-        conn, "Lectures", "DBMS", "mail:thread:2",
-        "Assignment 2", "Assignment due Friday.",
+        conn,
+        "Lectures",
+        "DBMS",
+        "mail:thread:2",
+        "Assignment 2",
+        "Assignment due Friday.",
         "Submit assignment 2 by Friday via the portal.",
     )
     captured = {}
@@ -70,8 +89,12 @@ def test_ask_mail_respects_top_k(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     for i in range(12):
         _seed_thread(
-            conn, "Placements", "Acme", f"mail:thread:{i}",
-            f"Interview Round {i}", "Interview scheduled.",
+            conn,
+            "Placements",
+            "Acme",
+            f"mail:thread:{i}",
+            f"Interview Round {i}",
+            "Interview scheduled.",
             "interview interview interview call scheduled",
         )
     captured = {}
@@ -156,3 +179,40 @@ def test_prompt_carries_attachments_to_the_model():
     prompt = mail_ask.build_prompt("is my name in any attachment?", rows, rows, [])
     assert "NAMES THE USER: 23BCE1234" in prompt
     assert "shortlist.xlsx" in prompt
+
+
+def test_prompt_includes_live_calendar_events_when_connected(monkeypatch):
+    """Regression guard: the calendar context used to live in the now-deleted brain/ask.py.
+    Chat runs through mail_ask, so "what meetings do I have today" only works if the live
+    calendar is injected here."""
+    monkeypatch.setattr(
+        mail_ask.calendar_tool,
+        "list_upcoming_events",
+        lambda user_id, *a, **k: [
+            {"start": "2026-09-12T10:00:00", "title": "Ethos online test", "location": "SJT 717"},
+        ],
+    )
+    prompt = mail_ask.build_prompt("what meetings do I have?", [], [], [], user_id=1)
+
+    assert "=== CALENDAR EVENTS" in prompt
+    assert "Ethos online test" in prompt
+    assert "SJT 717" in prompt
+
+
+def test_prompt_omits_calendar_section_when_not_connected(monkeypatch):
+    def _boom(user_id, *a, **k):
+        raise RuntimeError("no calendar connected")
+
+    monkeypatch.setattr(mail_ask.calendar_tool, "list_upcoming_events", _boom)
+    prompt = mail_ask.build_prompt("anything?", [], [], [], user_id=1)
+    assert "=== CALENDAR EVENTS" not in prompt
+
+
+def test_prompt_omits_calendar_section_without_a_user(monkeypatch):
+    """No user_id (CLI/tests) must never trigger a calendar lookup at all."""
+
+    def _never(user_id, *a, **k):
+        raise AssertionError("must not look up a calendar without a user_id")
+
+    monkeypatch.setattr(mail_ask.calendar_tool, "list_upcoming_events", _never)
+    assert "=== CALENDAR EVENTS" not in mail_ask.build_prompt("anything?", [], [], [])

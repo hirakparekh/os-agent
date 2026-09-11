@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -14,11 +15,15 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(HERE, "../..")
 // SQLAlchemy URLs and env paths want forward slashes, even on Windows.
 const POSIX_ROOT = REPO_ROOT.split(path.sep).join("/")
+// Git-ignored, so a fresh clone doesn't have it — and SQLite won't create the parent directory
+// of its database file, so console/backend would fail to start.
+mkdirSync(path.join(REPO_ROOT, "e2e", ".tmp"), { recursive: true })
 
 const FRONTEND_PORT = 5199
 const CONSOLE_PORT = 8111
 const BRAIN_PORT = 8112
 const OPENROUTER_PORT = 8113
+const SARVAM_PORT = 8114
 
 // Both backends verify the same JWT, so they must share this. Tests sign in through the real
 // /auth/login, so the seeded admin credentials matter too.
@@ -31,6 +36,7 @@ export const E2E = {
   adminPassword: "e2e-password",
   consoleUrl: `http://127.0.0.1:${CONSOLE_PORT}`,
   brainUrl: `http://127.0.0.1:${BRAIN_PORT}`,
+  sarvamUrl: `http://127.0.0.1:${SARVAM_PORT}`,
 }
 
 export const pythonEnv = {
@@ -46,6 +52,8 @@ export const pythonEnv = {
   BRAIN_CORS_ORIGINS: ORIGIN,
   OPENROUTER_BASE_URL: `http://127.0.0.1:${OPENROUTER_PORT}`,
   OPENROUTER_API_KEYS: "e2e-fake-key",
+  SARVAM_BASE_URL: `http://127.0.0.1:${SARVAM_PORT}`,
+  SARVAM_API_KEY: "e2e-fake-sarvam-key",
   // Keeps the placeholder Gmail token out of the developer's real ~/.hermes directory.
   GMAIL_TOKEN_PATH: `${POSIX_ROOT}/e2e/.tmp/gmail-token.json`,
   // Keeps the suite's per-user mail databases out of brain/data, which a real dev account
@@ -65,11 +73,31 @@ export default defineConfig({
     baseURL: ORIGIN,
     trace: "retain-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        // A synthetic microphone (a steady tone) with the permission prompt auto-accepted, so
+        // the voice spec can drive real MediaRecorder capture headlessly.
+        permissions: ["microphone"],
+        launchOptions: {
+          args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
+        },
+      },
+    },
+  ],
   webServer: [
     {
       command: `uv run python -m e2e.support.fake_openrouter --port ${OPENROUTER_PORT}`,
       url: `http://127.0.0.1:${OPENROUTER_PORT}/docs`,
+      cwd: REPO_ROOT,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+    {
+      command: `uv run python -m e2e.support.fake_sarvam --port ${SARVAM_PORT}`,
+      url: `${E2E.sarvamUrl}/docs`,
       cwd: REPO_ROOT,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

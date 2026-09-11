@@ -1,4 +1,4 @@
-"""Ops-console API tests. SQLite per test (no live Postgres needed); ClickUp faked."""
+"""Ops-console API tests. SQLite per test — no live Postgres needed."""
 
 from __future__ import annotations
 
@@ -8,10 +8,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from clickup.client import TaskRef
 from console.backend.config import Settings
 from console.backend.main import create_app
-from console.backend.onboarding import get_clickup_client
 
 ADMIN_EMAIL = "admin@agent-os.local"
 ADMIN_PASSWORD = "changeme"
@@ -19,21 +17,13 @@ ADMIN_PASSWORD = "changeme"
 
 def _settings(tmp_path: Path) -> Settings:
     return Settings(
-        clickup_token="t",
         slack_bot_token=None,
-        fathom_api_key=None,
         admin_email=ADMIN_EMAIL,
         admin_password=ADMIN_PASSWORD,
-        clickup_employees_list_id="900",
         database_url=f"sqlite:///{tmp_path}/test.db",
         secret_key="test-secret-at-least-32-bytes-long!!",
         brain_api_base_url="http://localhost:8080",
     )
-
-
-class _FakeClickUp:
-    def create_task(self, list_id: str, name: str, description: str) -> TaskRef:
-        return TaskRef(id="abc123", url="https://app.clickup.com/t/abc123")
 
 
 @pytest.fixture
@@ -43,7 +33,6 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClie
     # via the Applications UI leaks into test assertions about "not_configured".
     monkeypatch.setenv("CONSOLE_INTEGRATIONS_PATH", str(tmp_path / "console-integrations.json"))
     app = create_app(_settings(tmp_path))
-    app.dependency_overrides[get_clickup_client] = lambda: _FakeClickUp()
     with TestClient(app) as test_client:  # triggers lifespan (DB setup + seed)
         yield test_client
 
@@ -62,7 +51,7 @@ def test_health_reports_configuration(client: TestClient) -> None:
     res = client.get("/health")
     assert res.status_code == 200
     names = {i["name"]: i["status"] for i in res.json()["integrations"]}
-    assert names == {"clickup": "configured", "slack": "not_configured", "fathom": "not_configured"}
+    assert names == {"slack": "not_configured"}
 
 
 def test_seeded_admin_can_log_in(client: TestClient) -> None:
@@ -79,27 +68,6 @@ def test_me_returns_current_user(client: TestClient) -> None:
     assert res.status_code == 200
     assert res.json()["email"] == ADMIN_EMAIL
     assert res.json()["role"] == "admin"
-
-
-def test_onboarding_requires_auth(client: TestClient) -> None:
-    assert client.post("/onboarding", json={}).status_code == 401
-
-
-def test_onboarding_creates_clickup_task_and_appears_in_roster(client: TestClient) -> None:
-    payload = {
-        "name": "Sajal Mondal",
-        "email": "sajal@agent-os.local",
-        "role": "sales",
-        "slack_handle": "@sajal",
-        "products": ["product_one", "product_two"],
-    }
-    res = client.post("/onboarding", json=payload, headers=_bearer(_token(client)))
-    assert res.status_code == 201, res.text
-    assert res.json()["clickup_task_id"] == "abc123"
-
-    roster = client.get("/roster", headers=_bearer(_token(client)))
-    assert roster.status_code == 200
-    assert any(p["name"] == "Sajal Mondal" for p in roster.json())
 
 
 def test_admin_can_create_user_who_can_then_log_in(client: TestClient) -> None:
