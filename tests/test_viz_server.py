@@ -488,3 +488,36 @@ def test_feeds_expose_updated_at_for_client_side_cursors(client, conn):
     _urgent_thread(conn, "mail:thread:1", "Anything", topic)
     assert client.get("/api/needs-attention").json()["threads"][0]["updated_at"]
     assert client.get("/api/action-items").json()["items"][0]["updated_at"]
+
+
+def test_ask_forwards_the_session_id_so_follow_ups_can_be_resolved(client, monkeypatch):
+    """Brain keeps no history: session_id is the only link between one question and the last."""
+    seen = {}
+
+    def fake_ask(conn, question, details, *, user_id=None, session_id=None):
+        seen["question"] = question
+        seen["session_id"] = session_id
+        return {"answer": "ok"}
+
+    monkeypatch.setattr(viz_server.mail_ask, "ask_mail", fake_ask)
+
+    res = client.post("/api/mail/ask", json={"question": "when is it due?", "session_id": 42})
+
+    assert res.status_code == 200
+    assert seen == {"question": "when is it due?", "session_id": 42}
+
+
+def test_ask_without_a_session_id_still_works(client, monkeypatch):
+    """The field is optional, so older clients keep the one-shot behaviour."""
+    seen = {}
+
+    def fake_ask(conn, question, details, *, user_id=None, session_id=None):
+        seen["session_id"] = session_id
+        return {"answer": "ok"}
+
+    monkeypatch.setattr(viz_server.mail_ask, "ask_mail", fake_ask)
+
+    res = client.post("/api/mail/ask", json={"question": "what is due?"})
+
+    assert res.status_code == 200
+    assert seen == {"session_id": None}

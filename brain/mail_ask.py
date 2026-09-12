@@ -13,13 +13,27 @@ MailChat UI, which has no "sources" affordance today.
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from typing import Any
 
-from brain import bm25, calendar_tool, mail_timeline, profile, store
+from brain import bm25, calendar_tool, chat_pins, mail_timeline, profile, store
 from brain.openrouter import call_openrouter
 
+_log = logging.getLogger(__name__)
+
 TOP_K = 8  # tunable: how many full thread bodies to include, see module docstring
+
+# Below this BM25 top score, a question is treated as a follow-up that cannot stand on its own
+# ("when is it due?", "tell me more") and is answered from the session's pinned thread instead
+# of from whatever the ranking happened to surface.
+#
+# Measured against a real 15-thread mailbox: specific questions scored 5.09, 7.64 and 19.74,
+# while every follow-up and a generic "what should I do today" scored 3.45 or less. Per-term
+# normalisation was tried and is worse — "tell me more" scores 0.97/term against a genuine
+# question's 0.85. BM25 here is unnormalised (brain/bm25.py), so this drifts as the mailbox
+# grows; every ask logs its score so the number can be retuned from real data.
+FOLLOW_UP_SCORE_FLOOR = 4.0
 
 SYSTEM = """You are a mail assistant answering questions about someone's inbox, using a
 knowledge tree built from their ingested email (organized as category > topic > thread).
@@ -41,6 +55,11 @@ A CALENDAR EVENTS section, when present, lists the user's real upcoming Google C
 events. It is the authoritative source for "what's on my calendar" / "what meetings do I have
 today" — prefer it over anything the mail implies about their schedule. It is separate from
 the mail tree, so don't describe those events as emails.
+
+RELEVANT THREADS may include the thread the *previous* question was about, carried over so a
+follow-up like "when is it due?" or "tell me more" can be answered without the user repeating
+the subject. Treat the conversation as continuous: if the question is a follow-up, it is about
+that thread.
 
 Each overview line shows when that thread's mail was received ("~" means approximate) — use it
 for questions about when something arrived ("what came in last week"). DATED ITEMS lists the
@@ -92,19 +111,21 @@ def _rank_threads(
     rows: list[tuple[str, str, dict[str, Any]]],
     *,
     top_k: int = TOP_K,
-) -> list[tuple[str, str, dict[str, Any]]]:
-    """BM25-rank every thread against `question`; return the top_k with score > 0, in order.
+) -> list[tuple[tuple[str, str, dict[str, Any]], float]]:
+    """BM25-rank every thread against `question`; return the top_k scoring above zero, best
+    first, each paired with its score.
 
     A thread that shares no terms with the question is never expanded to full body — the
-    one-line overview is enough for the model to (correctly) say it isn't there.
+    one-line overview is enough for the model to (correctly) say it isn't there. The scores
+    come back with the rows because the caller decides, from the top one, whether this question
+    ranked well enough to be trusted at all (see FOLLOW_UP_SCORE_FLOOR).
     """
     if not rows:
         return []
     documents = {thread["id"]: _thread_doc_text(thread) for _, _, thread in rows}
     ranked = bm25.rank(question, documents)
     by_id = {thread["id"]: (cat, topic, thread) for cat, topic, thread in rows}
-    top_ids = [tid for tid, score in ranked if score > 0][:top_k]
-    return [by_id[tid] for tid in top_ids]
+    return [(by_id[tid], score) for tid, score in ranked if score > 0][:top_k]
 
 
 def _overview_attachment_note(thread: dict[str, Any]) -> str:
@@ -248,6 +269,7 @@ def build_prompt(
     top_threads: list[tuple[str, str, dict[str, Any]]],
     profile_details: list[dict[str, str]],
     user_id: str | int | None = None,
+    follow_up_about: str | None = None,
 ) -> str:
     overview = _format_overview(rows)
     full = "\n\n".join(_format_full_thread(c, t, th) for c, t, th in top_threads) or (
@@ -258,9 +280,20 @@ def build_prompt(
     profile_block = _format_profile(profile_details)
     now = datetime.now()
     dated = _format_dated_items(rows, now.date())
+    # A follow-up ranked too poorly to stand alone, so it is being answered from the thread the
+    # conversation was already about. Without saying so, the model answers from DATED ITEMS and
+    # the overview instead — "when is it due?" came back with every deadline in the mailbox.
+    follow_up = (
+        f"=== THIS IS A FOLLOW-UP ===\nThe question continues a conversation about "
+        f'"{follow_up_about}". Answer about that thread specifically, using the section below, '
+        f"unless the question plainly changes the subject.\n\n"
+        if follow_up_about
+        else ""
+    )
     return (
         f"{SYSTEM}\n\n"
         f"=== TODAY ===\n{now.strftime('%A, %Y-%m-%d')}\n\n"
+        f"{follow_up}"
         f"{_calendar_section(user_id)}"
         f"=== DATED ITEMS (deadlines and events, soonest first) ===\n{dated}\n\n"
         f"=== MAIL OVERVIEW (every thread, one line each) ===\n{overview}\n\n"
@@ -270,6 +303,61 @@ def build_prompt(
     )
 
 
+def _find_row(
+    rows: list[tuple[str, str, dict[str, Any]]], thread_id: str | None
+) -> tuple[str, str, dict[str, Any]] | None:
+    if not thread_id:
+        return None
+    return next((row for row in rows if row[2]["id"] == thread_id), None)
+
+
+def _choose_context(
+    conn: Any,
+    question: str,
+    rows: list[tuple[str, str, dict[str, Any]]],
+    *,
+    top_k: int,
+    session_id: int | str | None,
+) -> tuple[list[tuple[str, str, dict[str, Any]]], str]:
+    """Which threads get expanded in full for this question.
+
+    Either the fresh ranking wins or the session's pinned thread does — never a second search
+    and never a rewrite. The pin is updated only when the ranking wins, so a run of vague
+    follow-ups all resolve against the same thread.
+    """
+    ranked = _rank_threads(question, rows, top_k=top_k)
+    top_score = ranked[0][1] if ranked else 0.0
+    pinned_id = chat_pins.get_pin(conn, session_id)
+
+    if ranked and top_score >= FOLLOW_UP_SCORE_FLOOR:
+        context = [row for row, _ in ranked]
+        winner = context[0][2]["id"]
+        # Carry the thread the conversation was already about, so "how does that compare?"
+        # still has both in view. It goes last: the fresh match is what the question asked for.
+        carried = _find_row(rows, pinned_id)
+        if carried is not None and all(row[2]["id"] != pinned_id for row in context):
+            context.append(carried)
+        chat_pins.set_pin(conn, session_id, winner)
+        decision = "fresh"
+    else:
+        # Too vague to rank: "when is it due?" shares no words with the thread it means, so the
+        # ranking is noise. Answer from what the session is already about, and leave the pin.
+        carried = _find_row(rows, pinned_id)
+        context = [carried] if carried is not None else [row for row, _ in ranked]
+        decision = "pinned" if carried is not None else "unranked"
+
+    # The tuning data for FOLLOW_UP_SCORE_FLOOR. Lands in the brain log next to the request.
+    _log.info(
+        "ask: session=%s top_score=%.2f floor=%.1f decision=%s context=%s",
+        session_id,
+        top_score,
+        FOLLOW_UP_SCORE_FLOOR,
+        decision,
+        ",".join(row[2]["id"] for row in context) or "-",
+    )
+    return context, decision
+
+
 def ask_mail(
     conn: Any,
     question: str,
@@ -277,11 +365,16 @@ def ask_mail(
     *,
     top_k: int = TOP_K,
     user_id: str | int | None = None,
+    session_id: int | str | None = None,
 ) -> dict[str, str]:
     """Answer `question` over the mail knowledge tree. Returns {"answer": str}.
 
     `user_id` is only needed to pull this user's live calendar events into the prompt — the
     mail side all rides `conn`, which is already per-user.
+
+    `session_id` ties this question to the conversation it came from. With one, a question that
+    ranks too poorly to stand alone is answered from the thread the session is already about
+    (brain/chat_pins.py); without one, every question is a one-shot, exactly as before.
 
     Empty tree short-circuits to a canned message without calling the LLM.
     """
@@ -297,7 +390,10 @@ def ask_mail(
     seen = {d.get("key", "").strip().lower() for d in (profile_details or [])}
     merged = list(profile_details or []) + [d for d in stored if d["key"].lower() not in seen]
 
-    top_threads = _rank_threads(question, rows, top_k=top_k)
-    prompt = build_prompt(question, rows, top_threads, merged, user_id)
+    top_threads, decision = _choose_context(
+        conn, question, rows, top_k=top_k, session_id=session_id
+    )
+    following = top_threads[0][2]["title"] if decision == "pinned" and top_threads else None
+    prompt = build_prompt(question, rows, top_threads, merged, user_id, follow_up_about=following)
     reply = call_openrouter(prompt)
     return {"answer": reply.strip()}
