@@ -299,6 +299,27 @@ class Api {
         .toList(growable: false);
   }
 
+  // ----------------------------------------------------------------- profile
+
+  Future<UserProfile> profile() async {
+    final data = await _send('GET', _brain('/api/profile'));
+    return UserProfile.fromJson(data as Map<String, dynamic>);
+  }
+
+  /// Replaces the whole list — the API has no per-row endpoint.
+  ///
+  /// Saving re-scans attachments that were already ingested whenever the identifiers change:
+  /// findings are frozen at ingest, so a roll number added today would otherwise leave every
+  /// shortlist that arrived yesterday still claiming you are not on it.
+  Future<UserProfile> saveProfile(List<ProfileDetail> details) async {
+    final data = await _send(
+      'PUT',
+      _brain('/api/profile'),
+      body: {'details': details.map((d) => d.toJson()).toList(growable: false)},
+    );
+    return UserProfile.fromJson(data as Map<String, dynamic>);
+  }
+
   // ---------------------------------------------------------------- settings
 
   Future<BrainSettings> settings() async {

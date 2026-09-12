@@ -433,6 +433,41 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ----------------------------------------------------------------- profile
+
+  UserProfile profile = UserProfile.empty;
+  bool profileSaving = false;
+
+  Future<void> loadProfile() async {
+    try {
+      profile = await api.profile();
+      offline = false;
+    } on OfflineException {
+      offline = true;
+    } on ApiException {
+      // Keep whatever was loaded before rather than blanking the list.
+    }
+    notifyListeners();
+  }
+
+  /// Saves the whole list — the API has no per-row endpoint — and returns null, or a message
+  /// to put in front of the user.
+  Future<String?> saveProfile(List<ProfileDetail> details) async {
+    profileSaving = true;
+    notifyListeners();
+    try {
+      profile = await api.saveProfile(details);
+      return null;
+    } on OfflineException {
+      return 'Saving your details needs a connection.';
+    } on ApiException catch (e) {
+      return e.message;
+    } finally {
+      profileSaving = false;
+      notifyListeners();
+    }
+  }
+
   // ---------------------------------------------------------------- settings
 
   BrainSettings brainSettings = const BrainSettings();
