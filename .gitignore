@@ -43,3 +43,5 @@ e2e/.tmp/
 
 
 notes.txt
+# Autonomous-loop scratch: progress log, screenshots, disposable test credentials
+.loop/
