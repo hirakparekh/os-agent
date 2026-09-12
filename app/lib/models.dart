@@ -140,10 +140,37 @@ class TreeNode {
 
   bool get isThread => type == 'mail_thread';
 
+  /// Used by the tree's filter and time views, which rebuild branches out of the same nodes.
+  TreeNode copyWith({List<TreeNode>? children, String? summary}) => TreeNode(
+        id: id,
+        name: name,
+        type: type,
+        summary: summary ?? this.summary,
+        body: body,
+        channel: channel,
+        needsReview: needsReview,
+        children: children ?? this.children,
+        category: category,
+        topic: topic,
+        firstReceived: firstReceived,
+        lastReceived: lastReceived,
+        receivedEstimated: receivedEstimated,
+        events: events,
+      );
+
   /// Dated items still ahead, soonest first.
-  List<MailEvent> get upcomingEvents =>
-      events.where((e) => e.status != 'past').toList(growable: false)
-        ..sort((a, b) => a.date.compareTo(b.date));
+  ///
+  /// Decided from the date itself: the server sends no status with an event
+  /// (`brain/mail_timeline.py`), so filtering on one kept every past date too.
+  List<MailEvent> get upcomingEvents {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return events.where((e) {
+      final day = DateTime.tryParse(e.date);
+      return day != null && !day.isBefore(today);
+    }).toList(growable: false)
+      ..sort((a, b) => a.date.compareTo(b.date));
+  }
 
   /// Every thread anywhere beneath this node.
   Iterable<TreeNode> get threads sync* {
@@ -298,24 +325,24 @@ class IngestProgress {
 
 /// A date found in a thread — a deadline or an event (`brain/mail_timeline.py`).
 class MailEvent {
-  const MailEvent({required this.date, this.title, this.kind = 'event', this.status});
+  const MailEvent({required this.date, this.title, this.kind = 'event'});
 
+  /// The day the event falls on, ISO-8601. The API calls this field `start`.
   final String date;
   final String? title;
   final String kind; // deadline | event
-  final String? status; // overdue | soon | upcoming | past
 
   bool get isDeadline => kind == 'deadline';
 
+  /// `start` is what the tree endpoint sends; `date` is only read so a cache written by an
+  /// older build still parses.
   factory MailEvent.fromJson(Map<String, dynamic> json) => MailEvent(
-        date: json['date'] as String? ?? '',
+        date: json['start'] as String? ?? json['date'] as String? ?? '',
         title: json['title'] as String?,
         kind: json['kind'] as String? ?? 'event',
-        status: json['status'] as String?,
       );
 
-  Map<String, dynamic> toJson() =>
-      {'date': date, 'title': title, 'kind': kind, 'status': status};
+  Map<String, dynamic> toJson() => {'start': date, 'title': title, 'kind': kind};
 }
 
 /// A thread awaiting a human decision, from `GET /api/mail/review`.
