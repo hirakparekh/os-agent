@@ -28,12 +28,17 @@ TOP_K = 8  # tunable: how many full thread bodies to include, see module docstri
 # ("when is it due?", "tell me more") and is answered from the session's pinned thread instead
 # of from whatever the ranking happened to surface.
 #
-# Measured against a real 15-thread mailbox: specific questions scored 5.09, 7.64 and 19.74,
-# while every follow-up and a generic "what should I do today" scored 3.45 or less. Per-term
-# normalisation was tried and is worse — "tell me more" scores 0.97/term against a genuine
-# question's 0.85. BM25 here is unnormalised (brain/bm25.py), so this drifts as the mailbox
-# grows; every ask logs its score so the number can be retuned from real data.
-FOLLOW_UP_SCORE_FLOOR = 4.0
+# Measured against a real 15-thread mailbox rather than guessed. Specific questions scored
+# 5.09 ("What did PayU email me about?"), 7.64 and 19.74; follow-ups scored 2.91 ("when is it
+# due?"), 2.91, 0.58 and 0.00, and a generic "what should I do today" scored 3.45. One
+# follow-up, "who sent it?", scored 4.14 and slipped past an earlier 4.0 floor — it was
+# answered as a fresh question and got the sender wrong — hence 4.5.
+#
+# The margin above it is under a point, so this is a threshold to keep an eye on. Per-term
+# normalisation was tried and is worse ("tell me more" scores 0.97/term against a genuine
+# question's 0.85). BM25 here is unnormalised (brain/bm25.py), so scores drift with mailbox
+# size; every ask logs its score and decision so this can be retuned from real usage.
+FOLLOW_UP_SCORE_FLOOR = 4.5
 
 SYSTEM = """You are a mail assistant answering questions about someone's inbox, using a
 knowledge tree built from their ingested email (organized as category > topic > thread).
