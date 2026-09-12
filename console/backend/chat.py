@@ -140,6 +140,9 @@ def post_message(
             json={
                 "question": question,
                 "profile_details": [d.model_dump() for d in body.profile_details],
+                # Brain keeps no conversation history; this is the only thing tying one
+                # question to the last, so it can answer a follow-up from the same thread.
+                "session_id": session_id,
             },
             headers={"Authorization": authorization} if authorization else {},
             timeout=120,

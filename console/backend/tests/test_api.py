@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -94,3 +96,46 @@ def test_non_admin_cannot_create_user(client: TestClient) -> None:
         headers=_bearer(sales_token),
     )
     assert res.status_code == 403
+
+
+def test_chat_forwards_the_session_id_to_brain(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Console owns the conversation id; brain cannot resolve a follow-up without being told it."""
+    captured: dict[str, Any] = {}
+
+    class _Reply:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"answer": "Two deadlines this week."}
+
+    def fake_post(url: str, **kwargs: Any) -> _Reply:
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        return _Reply()
+
+    # Patched on httpx itself rather than on the chat module, which does not re-export it.
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    token = _token(client)
+    created = client.post("/chat/sessions", headers=_bearer(token))
+    assert created.status_code in (200, 201), created.text
+    session_id = int(created.json()["id"])
+
+    res = client.post(
+        f"/chat/sessions/{session_id}/messages",
+        headers=_bearer(token),
+        json={"question": "when is it due?"},
+    )
+    assert res.status_code == 200, res.text
+
+    url = str(captured["url"])
+    payload = captured["json"]
+    assert isinstance(payload, dict)
+    assert url.endswith("/api/mail/ask")
+    assert payload["session_id"] == session_id
+    assert payload["question"] == "when is it due?"

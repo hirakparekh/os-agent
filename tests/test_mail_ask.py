@@ -216,3 +216,181 @@ def test_prompt_omits_calendar_section_without_a_user(monkeypatch):
 
     monkeypatch.setattr(mail_ask.calendar_tool, "list_upcoming_events", _never)
     assert "=== CALENDAR EVENTS" not in mail_ask.build_prompt("anything?", [], [], [])
+
+
+# --- conversational follow-ups -----------------------------------------------------------
+#
+# A follow-up ("when is it due?") shares no words with the thread it refers to, so BM25 ranks
+# noise. These pin the rule: rank well and you are trusted, rank badly and the session's last
+# good thread answers instead. Scores are asserted through behaviour, not mocked, so the
+# threshold is exercised against the real ranker.
+
+
+def _two_threads(conn):
+    _seed_thread(
+        conn,
+        "Placements",
+        "PayU",
+        "mail:thread:payu",
+        "Software Engineer at PayU",
+        "A job posting for a backend role at PayU in Bengaluru.",
+        "PayU is hiring a Software Engineer. Apply before the closing date.",
+    )
+    _seed_thread(
+        conn,
+        "Lectures",
+        "Compilers",
+        "mail:thread:compilers",
+        "Guest Lecture on Compilers",
+        "A guest lecture by a visiting professor.",
+        "The compiler design lecture is in the seminar hall on Friday.",
+    )
+
+
+def _capture(monkeypatch):
+    captured = {}
+
+    def fake(prompt):
+        captured["prompt"] = prompt
+        return "ok"
+
+    monkeypatch.setattr(mail_ask, "call_openrouter", fake)
+    return captured
+
+
+def _full_section(prompt):
+    return prompt.split("=== RELEVANT THREADS IN FULL ===")[1]
+
+
+def _floor(monkeypatch, value):
+    """Calibrate the threshold to this fixture.
+
+    FOLLOW_UP_SCORE_FLOOR ships at 4.0, tuned against a real 15-thread mailbox. BM25's IDF term
+    shrinks as the corpus does — with two documents the ceiling is 0.69 per matched term — so a
+    question matching one distinctive word here scores 1.13 where the same question scores 5.09
+    against real mail. What these tests pin is the rule (below the floor, answer from the pin),
+    not the constant, so they set a floor that separates *this* corpus: measured 1.13 and 5.38
+    for real questions against 0.19 and 0.00 for follow-ups.
+    """
+    monkeypatch.setattr(mail_ask, "FOLLOW_UP_SCORE_FLOOR", value)
+
+
+def test_a_well_ranked_question_pins_the_thread_it_found(tmp_path, monkeypatch):
+    from brain import chat_pins
+
+    conn = _conn(tmp_path)
+    _two_threads(conn)
+    _floor(monkeypatch, 1.0)
+    _capture(monkeypatch)
+
+    mail_ask.ask_mail(conn, "What did PayU email me about?", session_id=1)
+
+    assert chat_pins.get_pin(conn, 1) == "mail:thread:payu"
+
+
+def test_a_vague_follow_up_is_answered_from_the_pinned_thread(tmp_path, monkeypatch):
+    conn = _conn(tmp_path)
+    _two_threads(conn)
+    _floor(monkeypatch, 1.0)
+    captured = _capture(monkeypatch)
+
+    mail_ask.ask_mail(conn, "What did PayU email me about?", session_id=1)
+    mail_ask.ask_mail(conn, "when is it due?", session_id=1)
+
+    full = _full_section(captured["prompt"])
+    assert "Software Engineer at PayU" in full
+    assert "Guest Lecture on Compilers" not in full
+
+
+def test_a_vague_follow_up_leaves_the_pin_where_it_was(tmp_path, monkeypatch):
+    from brain import chat_pins
+
+    conn = _conn(tmp_path)
+    _two_threads(conn)
+    _floor(monkeypatch, 1.0)
+    _capture(monkeypatch)
+
+    mail_ask.ask_mail(conn, "What did PayU email me about?", session_id=1)
+    mail_ask.ask_mail(conn, "tell me more", session_id=1)
+
+    assert chat_pins.get_pin(conn, 1) == "mail:thread:payu"
+
+
+def test_a_new_subject_carries_the_previous_thread_along(tmp_path, monkeypatch):
+    """The point of carrying it: "how does that compare?" needs both threads in view."""
+    from brain import chat_pins
+
+    conn = _conn(tmp_path)
+    _two_threads(conn)
+    _floor(monkeypatch, 1.0)
+    captured = _capture(monkeypatch)
+
+    mail_ask.ask_mail(conn, "What did PayU email me about?", session_id=1)
+    mail_ask.ask_mail(conn, "Guest Lecture on Compilers seminar hall", session_id=1)
+
+    full = _full_section(captured["prompt"])
+    assert "Guest Lecture on Compilers" in full
+    assert "Software Engineer at PayU" in full
+    assert chat_pins.get_pin(conn, 1) == "mail:thread:compilers"
+
+
+def test_a_vague_first_question_behaves_as_before(tmp_path, monkeypatch):
+    """No pin yet: nothing to fall back to, so the ranking stands however weak it is."""
+    from brain import chat_pins
+
+    conn = _conn(tmp_path)
+    _two_threads(conn)
+    _floor(monkeypatch, 1.0)
+    captured = _capture(monkeypatch)
+
+    mail_ask.ask_mail(conn, "tell me more", session_id=99)
+
+    assert chat_pins.get_pin(conn, 99) is None
+    assert "=== RELEVANT THREADS IN FULL ===" in captured["prompt"]
+
+
+def test_without_a_session_nothing_is_pinned(tmp_path, monkeypatch):
+    """Every other caller of ask_mail keeps the old one-shot behaviour."""
+    from brain import chat_pins
+
+    conn = _conn(tmp_path)
+    _two_threads(conn)
+    _floor(monkeypatch, 1.0)
+    _capture(monkeypatch)
+
+    mail_ask.ask_mail(conn, "What did PayU email me about?")
+
+    assert store.all_of_type(conn, chat_pins.PIN_TYPE) == []
+
+
+def test_a_follow_up_tells_the_model_which_thread_it_is_about(tmp_path, monkeypatch):
+    """Pinning the right thread is not enough on its own.
+
+    The prompt also carries DATED ITEMS for the whole mailbox and a one-line overview of every
+    thread, so an unanchored "when is it due?" was answered with every deadline in the mailbox
+    even though the correct thread was pinned and expanded. The follow-up banner is what makes
+    the pinned thread the subject rather than merely available.
+    """
+    conn = _conn(tmp_path)
+    _two_threads(conn)
+    captured = _capture(monkeypatch)
+    _floor(monkeypatch, 1.0)
+
+    mail_ask.ask_mail(conn, "What did PayU email me about?", session_id=1)
+    mail_ask.ask_mail(conn, "when is it due?", session_id=1)
+
+    prompt = captured["prompt"]
+    assert "=== THIS IS A FOLLOW-UP ===" in prompt
+    assert "Software Engineer at PayU" in prompt.split("=== TODAY ===")[0] + prompt
+    assert prompt.index("THIS IS A FOLLOW-UP") < prompt.index("=== QUESTION ===")
+
+
+def test_a_question_that_stands_alone_gets_no_follow_up_banner(tmp_path, monkeypatch):
+    conn = _conn(tmp_path)
+    _two_threads(conn)
+    captured = _capture(monkeypatch)
+    _floor(monkeypatch, 1.0)
+
+    mail_ask.ask_mail(conn, "What did PayU email me about?", session_id=1)
+
+    assert "=== THIS IS A FOLLOW-UP ===" not in captured["prompt"]

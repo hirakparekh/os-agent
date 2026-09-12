@@ -10,6 +10,7 @@ action-item worklists, analytics, automation rules, and the Markdown tree export
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 from collections.abc import Iterator
@@ -35,6 +36,11 @@ from brain import (
 )
 from brain.auth import CurrentUser
 from brain.emailtool import _token_path, mailbox_status
+
+# Uvicorn configures only its own loggers, so anything an application module logs at INFO is
+# dropped on the floor. The ask path logs its retrieval decision and BM25 score there — that is
+# the data the follow-up threshold is tuned from, so it has to actually reach the log.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s %(message)s")
 
 app = FastAPI(title="Agent OS Brain - Viz")
 HERE = Path(__file__).resolve().parent
@@ -389,6 +395,10 @@ class ProfileDetail(BaseModel):
 class MailAskRequest(BaseModel):
     question: str
     profile_details: list[ProfileDetail] = []
+    # Which conversation this question belongs to, so a follow-up can be answered from the
+    # thread the session is already about. Optional: a caller that omits it gets the old
+    # one-shot behaviour.
+    session_id: int | None = None
 
 
 @app.post("/api/mail/ask")
@@ -399,7 +409,9 @@ def mail_ask_endpoint(body: MailAskRequest, conn: ConnDep, user: CurrentUser) ->
     the mail side rides `conn`, which is already per-user."""
     details = [d.model_dump() for d in body.profile_details]
     try:
-        return mail_ask.ask_mail(conn, body.question, details, user_id=user)
+        return mail_ask.ask_mail(
+            conn, body.question, details, user_id=user, session_id=body.session_id
+        )
     except SystemExit as exc:
         # call_openrouter raises SystemExit when every OPENROUTER_API_KEYS entry is
         # exhausted/rejected.
