@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -24,6 +25,7 @@ class AppState extends ChangeNotifier {
   final Cache cache;
   static const _storage = FlutterSecureStorage();
   static const _tokenKey = 'auth_token';
+  static const _configKey = 'api_config';
 
   AuthStage stage = AuthStage.starting;
   String? signInError;
@@ -44,6 +46,16 @@ class AppState extends ChangeNotifier {
   /// Restore a previous session and paint cached content before any network call.
   Future<void> boot() async {
     await _loadFromCache();
+    // The server address must survive restarts, or a phone falls back to the defaults and
+    // every request after a relaunch goes nowhere.
+    final savedConfig = await _storage.read(key: _configKey);
+    if (savedConfig != null) {
+      try {
+        api.config = ApiConfig.fromJson(jsonDecode(savedConfig) as Map<String, dynamic>);
+      } catch (_) {
+        // Unreadable setting: keep the defaults rather than fail to start.
+      }
+    }
     final saved = await _storage.read(key: _tokenKey);
     if (saved == null) {
       stage = AuthStage.signedOut;
@@ -278,12 +290,19 @@ class AppState extends ChangeNotifier {
 
     try {
       final answer = await api.sendChatMessage(session.id, question.trim());
-      final settled = openSession!.messages
+
+      // Minutes can pass inside that await. The conversation may have been closed, or another
+      // one opened, and the reply belongs to neither — dereferencing openSession! here threw a
+      // null-check error in an async gap, where no error widget can catch it.
+      final current = openSession;
+      if (current == null || current.id != session.id) return;
+
+      final settled = current.messages
           .map((m) => m.pending ? ChatMessage(role: m.role, content: m.content) : m)
           .toList();
       openSession = ChatSession(
         id: session.id,
-        title: openSession!.title,
+        title: current.title,
         updatedAt: DateTime.now(),
         messages: [...settled, answer],
       );
@@ -421,6 +440,41 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ----------------------------------------------------------------- profile
+
+  UserProfile profile = UserProfile.empty;
+  bool profileSaving = false;
+
+  Future<void> loadProfile() async {
+    try {
+      profile = await api.profile();
+      offline = false;
+    } on OfflineException {
+      offline = true;
+    } on ApiException {
+      // Keep whatever was loaded before rather than blanking the list.
+    }
+    notifyListeners();
+  }
+
+  /// Saves the whole list — the API has no per-row endpoint — and returns null, or a message
+  /// to put in front of the user.
+  Future<String?> saveProfile(List<ProfileDetail> details) async {
+    profileSaving = true;
+    notifyListeners();
+    try {
+      profile = await api.saveProfile(details);
+      return null;
+    } on OfflineException {
+      return 'Saving your details needs a connection.';
+    } on ApiException catch (e) {
+      return e.message;
+    } finally {
+      profileSaving = false;
+      notifyListeners();
+    }
+  }
+
   // ---------------------------------------------------------------- settings
 
   BrainSettings brainSettings = const BrainSettings();
@@ -511,6 +565,7 @@ class AppState extends ChangeNotifier {
 
   void setConfig(ApiConfig config) {
     api.config = config;
+    unawaited(_storage.write(key: _configKey, value: jsonEncode(config.toJson())));
     notifyListeners();
   }
 }

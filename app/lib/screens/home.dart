@@ -4,10 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../app_state.dart';
 import 'chat.dart';
-import 'insights.dart';
-import 'review.dart';
-import 'settings.dart';
-import 'today.dart';
+import 'home_tab.dart';
 import 'tree.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -26,7 +23,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(const ['Today', 'Knowledge tree', 'Chat'][_tab]),
+        title: Text(const ['Home', 'Knowledge tree', 'Chat'][_tab]),
+        // No overflow menu: everything it held is a card on the home screen, one tap away.
         actions: [
           if (state.refreshing)
             const Padding(
@@ -45,41 +43,21 @@ class _HomeScreenState extends State<HomeScreen> {
               tooltip: 'Refresh',
               onPressed: state.refresh,
             ),
-          PopupMenuButton<String>(
-            onSelected: (value) async {
-              switch (value) {
-                case 'sync':
-                  await state.runSync();
-                case 'review':
-                  await _open(context, const ReviewScreen());
-                case 'insights':
-                  await _open(context, const InsightsScreen());
-                case 'settings':
-                  await _open(context, const SettingsScreen());
-              }
-            },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'sync', child: Text('Sync mail now')),
-              PopupMenuItem(value: 'review', child: Text('Needs a decision')),
-              PopupMenuItem(value: 'insights', child: Text('Insights')),
-              PopupMenuItem(value: 'settings', child: Text('Settings')),
-            ],
-          ),
         ],
         bottom: _StatusStrip(state: state),
       ),
       body: IndexedStack(
         index: _tab,
-        children: const [TodayTab(), TreeTab(), ChatTab()],
+        children: const [HomeTab(), TreeTab(), ChatTab()],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (i) => setState(() => _tab = i),
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.bolt_outlined),
-            selectedIcon: Icon(Icons.bolt),
-            label: 'Today',
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home),
+            label: 'Home',
           ),
           NavigationDestination(
             icon: Icon(Icons.account_tree_outlined),
@@ -114,8 +92,12 @@ class _StatusStrip extends StatelessWidget implements PreferredSizeWidget {
   bool get _visible =>
       state.syncing || state.offline || state.mailStatus.needsReconnect || _neverConnected;
 
+  /// Only once the server has actually answered. An unfetched status is not a disconnected
+  /// mailbox: when the app cannot reach the backend at all, offering Connect just fails again.
   bool get _neverConnected =>
-      !state.mailStatus.connected && !state.mailStatus.needsReconnect;
+      state.mailStatus.checked &&
+      !state.mailStatus.connected &&
+      !state.mailStatus.needsReconnect;
 
   @override
   Widget build(BuildContext context) {
@@ -134,6 +116,18 @@ class _StatusStrip extends StatelessWidget implements PreferredSizeWidget {
           width: 14,
           child: CircularProgressIndicator(strokeWidth: 2),
         ),
+      );
+    }
+
+    // Checked before the Gmail bands on purpose: with no route to the server, "Gmail not
+    // connected" is a guess, and the Connect it offers cannot succeed.
+    if (state.offline) {
+      return _band(
+        context,
+        background: scheme.surfaceContainerHighest,
+        foreground: scheme.onSurfaceVariant,
+        icon: Icons.cloud_off,
+        text: 'Offline — showing saved data',
       );
     }
 
@@ -240,6 +234,3 @@ Future<void> _pollUntilConnected(AppState state) async {
   }
 }
 
-Future<void> _open(BuildContext context, Widget screen) => Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => screen),
-    );

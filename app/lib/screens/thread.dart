@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../app_state.dart';
+import '../mail_timeline.dart';
 import '../models.dart';
 
 /// A single thread, read out of the cached tree rather than fetched.
@@ -41,6 +42,8 @@ class ThreadScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 _Meta(node: node),
+                const SizedBox(height: 20),
+                _Block(label: 'Category', child: _MoveCategory(node: node)),
                 if (node.summary != null && node.summary!.isNotEmpty) ...[
                   const SizedBox(height: 20),
                   _Block(label: 'Summary', child: Text(node.summary!, style: _bodyStyle)),
@@ -130,6 +133,116 @@ class _Meta extends StatelessWidget {
             style: TextStyle(fontSize: 12.5, color: scheme.tertiary),
           ),
         ],
+      ],
+    );
+  }
+}
+
+/// Move a thread to another category, as the console's mind map does from its detail panel.
+///
+/// A free-text field with suggestions rather than a picker: the right category often does not
+/// exist yet — that is how a thread got misfiled — and `POST /api/mail/reclassify` creates one
+/// on demand. Owns its controller so it is disposed with the route.
+class _MoveCategory extends StatefulWidget {
+  const _MoveCategory({required this.node});
+
+  final TreeNode node;
+
+  @override
+  State<_MoveCategory> createState() => _MoveCategoryState();
+}
+
+class _MoveCategoryState extends State<_MoveCategory> {
+  late final _controller = TextEditingController(text: widget.node.category ?? '');
+  bool _moving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _move() async {
+    final target = _controller.text.trim();
+    if (target.isEmpty || target == widget.node.category) return;
+    setState(() {
+      _moving = true;
+      _error = null;
+    });
+    final ok = await context.read<AppState>().reclassify(widget.node.id, target);
+    if (!mounted) return;
+    setState(() {
+      _moving = false;
+      _error = ok ? null : "Couldn't move this thread.";
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final state = context.watch<AppState>();
+    final categories = <String>{
+      for (final category in state.tree?.children ?? const <TreeNode>[])
+        if (category.type == 'mail_category') category.name,
+    };
+    final path = [widget.node.category, widget.node.topic].whereType<String>().join(' › ');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (path.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Text(
+              path,
+              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+            ),
+          ),
+        Row(
+          children: [
+            Expanded(
+              child: Autocomplete<String>(
+                initialValue: TextEditingValue(text: _controller.text),
+                optionsBuilder: (value) => value.text.isEmpty
+                    ? categories
+                    : categories.where(
+                        (c) => c.toLowerCase().contains(value.text.toLowerCase()),
+                      ),
+                onSelected: (value) => _controller.text = value,
+                fieldViewBuilder: (context, controller, focusNode, onSubmit) {
+                  controller.addListener(() => _controller.text = controller.text);
+                  return TextField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: 'Category',
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(fontSize: 14),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(width: 10),
+            FilledButton(
+              onPressed: _moving ? null : _move,
+              child: _moving
+                  ? const SizedBox(
+                      height: 16,
+                      width: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Move'),
+            ),
+          ],
+        ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(_error!, style: TextStyle(fontSize: 12.5, color: scheme.error)),
+          ),
       ],
     );
   }
@@ -241,9 +354,11 @@ class _EventRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final colour = switch (event.status) {
-      'overdue' => scheme.error,
-      'soon' => scheme.tertiary,
+    // Recomputed against today rather than read off the payload, which carries no status.
+    final status = eventStatus(event, DateTime.now());
+    final colour = switch (status) {
+      ThreadStatus.overdue => scheme.error,
+      ThreadStatus.soon => scheme.tertiary,
       _ => scheme.onSurfaceVariant,
     };
 
@@ -270,8 +385,8 @@ class _EventRow extends StatelessWidget {
                 Text(
                   [
                     _day(event.date),
-                    if (event.status == 'overdue') 'overdue',
-                    if (event.status == 'soon') 'soon',
+                    if (status == ThreadStatus.overdue) 'overdue',
+                    if (status == ThreadStatus.soon) 'soon',
                   ].join('  ·  '),
                   style: TextStyle(fontSize: 12.5, color: colour),
                 ),

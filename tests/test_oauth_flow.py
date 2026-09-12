@@ -15,10 +15,45 @@ import pytest
 from brain import oauth_flow
 
 
-def test_state_round_trips_user_and_service(monkeypatch):
+def test_state_round_trips_user_service_and_code_verifier(monkeypatch):
+    """The PKCE verifier rides in the state because the exchange happens in a *different*
+    request, with a different Flow object, than the one that generated it. Google rejects the
+    code with `invalid_grant: Missing code verifier` when it is lost in between."""
     monkeypatch.setenv("OPS_SECRET_KEY", "test-secret-at-least-32-bytes-long!!")
-    state = oauth_flow._sign_state(7, "gmail")
-    assert oauth_flow._verify_state(state) == (7, "gmail")
+    state = oauth_flow._sign_state(7, "gmail", "a-code-verifier")
+    assert oauth_flow._verify_state(state) == (7, "gmail", "a-code-verifier")
+
+
+def test_auth_url_carries_a_pkce_challenge_whose_verifier_is_in_the_state(monkeypatch, tmp_path):
+    """The challenge Google is given and the verifier we can recover must be the same pair."""
+    import hashlib
+    import json
+    from base64 import urlsafe_b64encode
+    from urllib.parse import parse_qs, urlparse
+
+    monkeypatch.setenv("OPS_SECRET_KEY", "test-secret-at-least-32-bytes-long!!")
+    creds = tmp_path / "credentials.json"
+    creds.write_text(
+        json.dumps(
+            {
+                "web": {
+                    "client_id": "test-client-id",
+                    "client_secret": "test-client-secret",
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GMAIL_CREDENTIALS_PATH", str(creds))
+
+    query = parse_qs(urlparse(oauth_flow.build_auth_url("gmail", 7)).query)
+    _, _, verifier = oauth_flow._verify_state(query["state"][0])
+
+    assert query["code_challenge_method"][0] == "S256"
+    expected = urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+    assert query["code_challenge"][0] == expected.decode("ascii").rstrip("=")
 
 
 def test_state_signed_with_another_key_is_rejected(monkeypatch):
@@ -26,7 +61,7 @@ def test_state_signed_with_another_key_is_rejected(monkeypatch):
     between a stranger's redirect and writing tokens against someone else's account."""
     monkeypatch.setenv("OPS_SECRET_KEY", "the-real-secret-at-least-32-bytes!!")
     forged = jwt.encode(
-        {"sub": "1", "svc": "gmail", "exp": int(time.time()) + 600},
+        {"sub": "1", "svc": "gmail", "cv": "x", "exp": int(time.time()) + 600},
         "an-attackers-own-key",
         algorithm="HS256",
     )

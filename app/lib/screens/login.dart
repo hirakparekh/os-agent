@@ -130,18 +130,44 @@ class _LoginScreenState extends State<LoginScreen> {
 
 /// Lets a tester point the app at a different backend without a rebuild — the emulator, a
 /// laptop on the same wifi, or a hosted origin.
-Future<void> _showServerSheet(BuildContext context) async {
+Future<void> _showServerSheet(BuildContext context) {
   final state = context.read<AppState>();
-  final controller = TextEditingController(text: state.api.config.consoleBase);
-  await showModalBottomSheet<void>(
+  return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    builder: (sheetContext) => Padding(
+    builder: (_) => _ServerSheet(state: state),
+  );
+}
+
+/// Owns its controller so it is disposed with the route. Disposing it as soon as
+/// showModalBottomSheet returned broke the sheet's exit animation, which still builds the
+/// TextField — Back on this sheet showed a red error screen.
+class _ServerSheet extends StatefulWidget {
+  const _ServerSheet({required this.state});
+
+  final AppState state;
+
+  @override
+  State<_ServerSheet> createState() => _ServerSheetState();
+}
+
+class _ServerSheetState extends State<_ServerSheet> {
+  late final _controller = TextEditingController(text: widget.state.api.config.consoleBase);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
       padding: EdgeInsets.only(
         left: 20,
         right: 20,
         top: 20,
-        bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 20,
+        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -151,12 +177,12 @@ Future<void> _showServerSheet(BuildContext context) async {
           const SizedBox(height: 6),
           const Text(
             'A hosted deployment serves both services from one address. For local '
-            'development, use http://10.0.2.2:8000 from the emulator.',
+            'development over USB (adb reverse), use http://localhost:8000.',
             style: TextStyle(fontSize: 13),
           ),
           const SizedBox(height: 16),
           TextField(
-            controller: controller,
+            controller: _controller,
             keyboardType: TextInputType.url,
             autocorrect: false,
             decoration: const InputDecoration(
@@ -167,20 +193,16 @@ Future<void> _showServerSheet(BuildContext context) async {
           const SizedBox(height: 16),
           FilledButton(
             onPressed: () {
-              final value = controller.text.trim();
+              final value = _controller.text.trim();
               if (value.isEmpty) return;
-              // Local dev runs two ports; anything else is assumed to be one origin.
-              state.setConfig(
-                value.contains(':8000') ? ApiConfig.localDev : ApiConfig.hosted(value),
-              );
-              Navigator.of(sheetContext).pop();
+              widget.state.setConfig(ApiConfig.parse(value));
+              Navigator.of(context).pop();
             },
             child: const Text('Save'),
           ),
           const SizedBox(height: 8),
         ],
       ),
-    ),
-  );
-  controller.dispose();
+    );
+  }
 }

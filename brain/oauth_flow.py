@@ -11,11 +11,13 @@ The flow here is the ordinary three-legged one:
   3. Google redirects to GET /api/oauth/callback, which exchanges the code server-side
   4. the client polls /api/{...}/status until it flips to connected
 
-`state` is a short-lived JWT signed with OPS_SECRET_KEY carrying (user_id, service). The
-callback arrives with no Authorization header — a browser redirect from Google can't carry
-one — so the state is how the server knows whose token it just received. Signing it (rather
-than keeping a server-side pending-state table) means no shared mutable state, so this works
-unchanged under multiple uvicorn workers, and a forged callback is useless without the key.
+`state` is a short-lived JWT signed with OPS_SECRET_KEY carrying (user_id, service,
+code_verifier). The callback arrives with no Authorization header — a browser redirect from
+Google can't carry one — so the state is how the server knows whose token it just received.
+Signing it (rather than keeping a server-side pending-state table) means no shared mutable
+state, so this works unchanged under multiple uvicorn workers, and a forged callback is
+useless without the key. The PKCE verifier rides along for the same reason: steps 1 and 3 are
+different requests with different Flow objects, and Google rejects the exchange without it.
 
 Note on `prompt="consent"`: this project requests https://mail.google.com/, a *restricted*
 scope, on an unverified app — so refresh tokens expire after 7 days and users re-consent
@@ -26,6 +28,7 @@ for it every time rather than relying on Google remembering a prior grant.
 from __future__ import annotations
 
 import os
+import secrets
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -89,25 +92,36 @@ def redirect_uri() -> str:
     return f"{base}/api/oauth/callback"
 
 
-def _sign_state(user_id: Any, service: str) -> str:
+def _sign_state(user_id: Any, service: str, code_verifier: str) -> str:
     now = int(time.time())
     return jwt.encode(
-        {"sub": str(user_id), "svc": service, "iat": now, "exp": now + STATE_TTL_SECONDS},
+        {
+            "sub": str(user_id),
+            "svc": service,
+            # See build_auth_url: the exchange runs in a different request, so the PKCE verifier
+            # has nowhere else to live. It is signed, short-lived, and useless without the code.
+            "cv": code_verifier,
+            "iat": now,
+            "exp": now + STATE_TTL_SECONDS,
+        },
         get_secret_key(),
         algorithm="HS256",
     )
 
 
-def _verify_state(state: str) -> tuple[int, str]:
+def _verify_state(state: str) -> tuple[int, str, str]:
     try:
         payload = jwt.decode(state, get_secret_key(), algorithms=["HS256"])
     except jwt.PyJWTError as exc:
         raise OAuthFlowError(f"invalid or expired consent state: {exc}") from exc
     service = payload.get("svc")
     sub = payload.get("sub")
+    code_verifier = payload.get("cv")
     if service not in SERVICES or not (isinstance(sub, str) and sub.isdigit()):
         raise OAuthFlowError("consent state did not identify a known service/user")
-    return int(sub), service
+    if not isinstance(code_verifier, str) or not code_verifier:
+        raise OAuthFlowError("consent state carried no PKCE verifier")
+    return int(sub), service, code_verifier
 
 
 def _flow(service: _Service) -> Any:
@@ -129,25 +143,36 @@ def _flow(service: _Service) -> Any:
 
 
 def build_auth_url(service_name: str, user_id: Any) -> str:
-    """The Google consent URL to send this user's browser to."""
+    """The Google consent URL to send this user's browser to.
+
+    The PKCE verifier is generated *here* rather than left to Flow's own autogeneration, because
+    Flow stores it on the instance and the token exchange happens in a later request with a new
+    instance — the verifier would simply be gone, and Google rejects the code with
+    `invalid_grant: Missing code verifier`. Signing it into the state keeps the flow stateless.
+    """
     service = SERVICES.get(service_name)
     if service is None:
         raise OAuthFlowError(f"unknown service '{service_name}'")
-    url, _ = _flow(service).authorization_url(
+    flow = _flow(service)
+    # 64 random bytes, url-safe: well inside RFC 7636's 43-128 unreserved characters.
+    flow.code_verifier = secrets.token_urlsafe(64)
+    url, _ = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",  # see module docstring — we need a refresh_token every time
-        state=_sign_state(user_id, service_name),
+        state=_sign_state(user_id, service_name, flow.code_verifier),
     )
     return str(url)
 
 
 def complete(state: str, code: str) -> tuple[int, str]:
     """Exchange an authorization code for tokens and persist them. Returns (user_id, service)."""
-    user_id, service_name = _verify_state(state)
+    user_id, service_name, code_verifier = _verify_state(state)
     service = SERVICES[service_name]
 
     flow = _flow(service)
+    # The verifier this code was challenged with, recovered from the signed state.
+    flow.code_verifier = code_verifier
     try:
         flow.fetch_token(code=code)
     except Exception as exc:

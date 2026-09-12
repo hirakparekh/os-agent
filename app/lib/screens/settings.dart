@@ -168,40 +168,60 @@ Future<void> _connect(
   }
 }
 
-Future<void> _editServer(BuildContext context) async {
+Future<void> _editServer(BuildContext context) {
   final state = context.read<AppState>();
-  final controller = TextEditingController(text: state.api.config.consoleBase);
-  await showDialog<void>(
+  return showDialog<void>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
+    builder: (_) => _ServerDialog(state: state),
+  );
+}
+
+/// Owns its controller so it is disposed with the route, after the dialog's exit animation
+/// has stopped building the TextField (same bug as the login screen's server sheet).
+class _ServerDialog extends StatefulWidget {
+  const _ServerDialog({required this.state});
+
+  final AppState state;
+
+  @override
+  State<_ServerDialog> createState() => _ServerDialogState();
+}
+
+class _ServerDialogState extends State<_ServerDialog> {
+  late final _controller = TextEditingController(text: widget.state.api.config.consoleBase);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
       title: const Text('Server address'),
       content: TextField(
-        controller: controller,
+        controller: _controller,
         keyboardType: TextInputType.url,
         autocorrect: false,
         decoration: const InputDecoration(border: OutlineInputBorder()),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(dialogContext).pop(),
+          onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
         FilledButton(
           onPressed: () {
-            final value = controller.text.trim();
-            if (value.isNotEmpty) {
-              state.setConfig(
-                value.contains(':8000') ? ApiConfig.localDev : ApiConfig.hosted(value),
-              );
-            }
-            Navigator.of(dialogContext).pop();
+            final value = _controller.text.trim();
+            if (value.isNotEmpty) widget.state.setConfig(ApiConfig.parse(value));
+            Navigator.of(context).pop();
           },
           child: const Text('Save'),
         ),
       ],
-    ),
-  );
-  controller.dispose();
+    );
+  }
 }
 
 class _ConnectionTile extends StatelessWidget {

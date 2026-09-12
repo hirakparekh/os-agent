@@ -59,7 +59,7 @@ class Cache {
 
   Future<CachedList<UrgentThread>> loadUrgent() async {
     final env = await _read('urgent');
-    if (env == null) return CachedList.empty();
+    if (env == null) return const CachedList.empty();
     final list = (env.payload as List<dynamic>)
         .map((t) => UrgentThread.fromJson(t as Map<String, dynamic>))
         .toList(growable: false);
@@ -71,7 +71,7 @@ class Cache {
 
   Future<CachedList<ActionItem>> loadActions() async {
     final env = await _read('actions');
-    if (env == null) return CachedList.empty();
+    if (env == null) return const CachedList.empty();
     final list = (env.payload as List<dynamic>)
         .map((i) => ActionItem.fromJson(i as Map<String, dynamic>))
         .toList(growable: false);
@@ -82,7 +82,7 @@ class Cache {
 
   Future<CachedValue<TreeNode>> loadTree() async {
     final env = await _read('tree');
-    if (env == null) return CachedValue(null, null);
+    if (env == null) return const CachedValue(null, null);
     return CachedValue(
       TreeNode.fromJson(env.payload as Map<String, dynamic>),
       env.fetchedAt,
@@ -94,7 +94,7 @@ class Cache {
 
   Future<CachedList<ChatSession>> loadSessions() async {
     final env = await _read('sessions');
-    if (env == null) return CachedList.empty();
+    if (env == null) return const CachedList.empty();
     final list = (env.payload as List<dynamic>)
         .map((s) => ChatSession.fromJson(s as Map<String, dynamic>))
         .toList(growable: false);

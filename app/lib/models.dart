@@ -140,10 +140,37 @@ class TreeNode {
 
   bool get isThread => type == 'mail_thread';
 
+  /// Used by the tree's filter and time views, which rebuild branches out of the same nodes.
+  TreeNode copyWith({List<TreeNode>? children, String? summary}) => TreeNode(
+        id: id,
+        name: name,
+        type: type,
+        summary: summary ?? this.summary,
+        body: body,
+        channel: channel,
+        needsReview: needsReview,
+        children: children ?? this.children,
+        category: category,
+        topic: topic,
+        firstReceived: firstReceived,
+        lastReceived: lastReceived,
+        receivedEstimated: receivedEstimated,
+        events: events,
+      );
+
   /// Dated items still ahead, soonest first.
-  List<MailEvent> get upcomingEvents =>
-      events.where((e) => e.status != 'past').toList(growable: false)
-        ..sort((a, b) => a.date.compareTo(b.date));
+  ///
+  /// Decided from the date itself: the server sends no status with an event
+  /// (`brain/mail_timeline.py`), so filtering on one kept every past date too.
+  List<MailEvent> get upcomingEvents {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return events.where((e) {
+      final day = DateTime.tryParse(e.date);
+      return day != null && !day.isBefore(today);
+    }).toList(growable: false)
+      ..sort((a, b) => a.date.compareTo(b.date));
+  }
 
   /// Every thread anywhere beneath this node.
   Iterable<TreeNode> get threads sync* {
@@ -215,6 +242,7 @@ class MailStatus {
     this.email,
     this.reason,
     this.needsReconnect = false,
+    this.checked = true,
   });
 
   final bool connected;
@@ -222,7 +250,14 @@ class MailStatus {
   final String? reason;
   final bool needsReconnect;
 
-  static const MailStatus unknown = MailStatus(connected: false, reason: 'not checked yet');
+  /// False until a status has actually come back from the server. "We have not asked yet" is
+  /// a different fact from "the mailbox is disconnected", and conflating them sends people to
+  /// a Connect button that cannot work — which is exactly what happens when the phone loses
+  /// its tunnel to the backend.
+  final bool checked;
+
+  static const MailStatus unknown =
+      MailStatus(connected: false, reason: 'not checked yet', checked: false);
 
   factory MailStatus.fromJson(Map<String, dynamic> json) => MailStatus(
         connected: json['connected'] as bool? ?? false,
@@ -298,24 +333,69 @@ class IngestProgress {
 
 /// A date found in a thread — a deadline or an event (`brain/mail_timeline.py`).
 class MailEvent {
-  const MailEvent({required this.date, this.title, this.kind = 'event', this.status});
+  const MailEvent({required this.date, this.title, this.kind = 'event'});
 
+  /// The day the event falls on, ISO-8601. The API calls this field `start`.
   final String date;
   final String? title;
   final String kind; // deadline | event
-  final String? status; // overdue | soon | upcoming | past
 
   bool get isDeadline => kind == 'deadline';
 
+  /// `start` is what the tree endpoint sends; `date` is only read so a cache written by an
+  /// older build still parses.
   factory MailEvent.fromJson(Map<String, dynamic> json) => MailEvent(
-        date: json['date'] as String? ?? '',
+        date: json['start'] as String? ?? json['date'] as String? ?? '',
         title: json['title'] as String?,
         kind: json['kind'] as String? ?? 'event',
-        status: json['status'] as String?,
       );
 
-  Map<String, dynamic> toJson() =>
-      {'date': date, 'title': title, 'kind': kind, 'status': status};
+  Map<String, dynamic> toJson() => {'start': date, 'title': title, 'kind': kind};
+}
+
+/// One "about you" fact, from `GET /api/profile`.
+///
+/// Free-form key/value, kept on the server rather than the device because the pipeline that
+/// needs it — attachment scanning at ingest — runs headless (`brain/profile.py`).
+class ProfileDetail {
+  const ProfileDetail({required this.key, required this.value});
+
+  final String key;
+  final String value;
+
+  factory ProfileDetail.fromJson(Map<String, dynamic> json) => ProfileDetail(
+        key: json['key'] as String? ?? '',
+        value: json['value'] as String? ?? '',
+      );
+
+  Map<String, dynamic> toJson() => {'key': key, 'value': value};
+}
+
+/// The stored profile: the details themselves, and which of them the server will look for
+/// inside attachments — `brain/profile.py`'s IDENTITY_KEYS decides, not the app.
+class UserProfile {
+  const UserProfile({
+    this.details = const [],
+    this.identifiers = const [],
+    this.rescanned = 0,
+  });
+
+  final List<ProfileDetail> details;
+  final List<String> identifiers;
+
+  /// How many already-ingested attachments the server re-read because the identifiers changed.
+  /// Only ever non-zero on a save.
+  final int rescanned;
+
+  static const empty = UserProfile();
+
+  factory UserProfile.fromJson(Map<String, dynamic> json) => UserProfile(
+        details: ((json['details'] as List<dynamic>?) ?? const [])
+            .map((d) => ProfileDetail.fromJson(d as Map<String, dynamic>))
+            .toList(growable: false),
+        identifiers: ((json['identifiers'] as List<dynamic>?) ?? const []).cast<String>(),
+        rescanned: ((json['rescanned'] as List<dynamic>?) ?? const []).length,
+      );
 }
 
 /// A thread awaiting a human decision, from `GET /api/mail/review`.

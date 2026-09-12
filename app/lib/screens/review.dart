@@ -173,6 +173,11 @@ Future<void> _pickCategory(
               children: categories
                   .map((c) => ListTile(
                         title: Text(c),
+                        // Picking the current category is a real choice, not a no-op: it says
+                        // the filing was right, which clears the flag and teaches the scorer.
+                        subtitle: c == item.category
+                            ? const Text('Keep it here — confirms the filing')
+                            : null,
                         trailing: c == item.category ? const Icon(Icons.check, size: 18) : null,
                         onTap: () => Navigator.of(sheetContext).pop(c),
                       ))
@@ -185,11 +190,20 @@ Future<void> _pickCategory(
     ),
   );
 
-  if (chosen == null || chosen == item.category) return;
+  if (chosen == null) return;
+
+  // Choosing the category it is already in used to be dropped here, which made the ticked row
+  // — the one the sheet opens on — do nothing at all. It is a confirmation: the server clears
+  // the low-confidence flag and learns from it exactly as it does for a correction.
+  final keeping = chosen == item.category;
   final ok = await state.reclassify(item.id, chosen);
   messenger.showSnackBar(
     SnackBar(
-      content: Text(ok ? 'Moved to $chosen' : 'Could not move it — this needs a connection.'),
+      content: Text(
+        ok
+            ? (keeping ? 'Kept in $chosen' : 'Moved to $chosen')
+            : 'Could not save it — this needs a connection.',
+      ),
     ),
   );
 }
