@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'error_fallback.dart';
+
 import 'api.dart';
 import 'app_state.dart';
 import 'cache.dart';
@@ -10,6 +12,11 @@ import 'screens/login.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // A widget that throws, or a stray async error, must not put a red screen in front of
+  // someone reading their mail. Failures still reach the log; only what is shown changes.
+  installFriendlyErrorScreens();
+
   final cache = await Cache.open();
   final api = Api(config: ApiConfig.localDev);
   final state = AppState(api: api, cache: cache);

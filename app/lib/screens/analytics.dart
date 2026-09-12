@@ -138,9 +138,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   const SizedBox(height: 28),
                   // The relief rule: the series colours alone are not readable for everyone,
                   // so every number is also here as text.
-                  const _SectionLabel('DATA TABLE'),
+                  const _SectionLabel('BREAKDOWN'),
                   const SizedBox(height: 10),
-                  _DataTable(pivot: pivot, bucketLabel: _bucket == 'day' ? 'Date' : 'Week'),
+                  _Breakdown(pivot: pivot, colors: colors),
                 ],
               ),
             ),
@@ -399,41 +399,118 @@ class _Legend extends StatelessWidget {
   }
 }
 
-class _DataTable extends StatelessWidget {
-  const _DataTable({required this.pivot, required this.bucketLabel});
+/// The numbers, as an inset grouped list rather than a spreadsheet.
+///
+/// A wide table on a phone means horizontal scrolling to read a single row, and a column of
+/// zeros for every category that had a quiet day. One row per bucket reads top to bottom the
+/// way the rest of the screen does: the date and its total on the line, the categories that
+/// actually contributed underneath, each with its own colour.
+class _Breakdown extends StatelessWidget {
+  const _Breakdown({required this.pivot, required this.colors});
 
   final _Pivot pivot;
-  final String bucketLabel;
+  final Map<String, Color> colors;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final head = TextStyle(
-      fontSize: 12,
-      fontWeight: FontWeight.w600,
-      color: scheme.onSurfaceVariant,
-    );
-    const cell = TextStyle(fontSize: 12.5, fontFeatures: [FontFeature.tabularFigures()]);
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: DataTable(
-        headingRowHeight: 34,
-        dataRowMinHeight: 30,
-        dataRowMaxHeight: 38,
-        horizontalMargin: 0,
-        columnSpacing: 22,
-        columns: [
-          DataColumn(label: Text(bucketLabel, style: head)),
-          for (final category in pivot.categories) DataColumn(label: Text(category, style: head)),
+    return Container(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.6)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          for (var i = 0; i < pivot.rows.length; i++) ...[
+            if (i > 0)
+              Divider(
+                height: 1,
+                thickness: 1,
+                // Inset from the left, as a grouped list does, so the rows read as one card.
+                indent: 16,
+                color: scheme.outlineVariant.withValues(alpha: 0.5),
+              ),
+            _BreakdownRow(row: pivot.rows[i], categories: pivot.categories, colors: colors),
+          ],
         ],
-        rows: [
-          for (final row in pivot.rows)
-            DataRow(cells: [
-              DataCell(Text(row.bucket, style: cell)),
-              for (final category in pivot.categories)
-                DataCell(Text('${row.counts[category] ?? 0}', style: cell)),
-            ]),
+      ),
+    );
+  }
+}
+
+class _BreakdownRow extends StatelessWidget {
+  const _BreakdownRow({
+    required this.row,
+    required this.categories,
+    required this.colors,
+  });
+
+  final _Row row;
+  final List<String> categories;
+  final Map<String, Color> colors;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final present = [
+      for (final c in categories)
+        if ((row.counts[c] ?? 0) > 0) c,
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 13),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  row.bucket,
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                ),
+              ),
+              Text(
+                row.total == 1 ? '1 thread' : '${row.total} threads',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: scheme.onSurfaceVariant,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+          if (present.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                for (final category in present)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 7,
+                        height: 7,
+                        margin: const EdgeInsets.only(right: 5),
+                        decoration: BoxDecoration(
+                          color: colors[category] ?? scheme.primary,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      Text(
+                        '$category ${row.counts[category]}',
+                        style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ],
         ],
       ),
     );

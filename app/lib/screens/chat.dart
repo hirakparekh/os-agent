@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../app_state.dart';
@@ -6,6 +7,11 @@ import '../models.dart';
 import '../voice.dart';
 
 /// Ask questions over the mail tree.
+///
+/// Laid out the way a modern assistant app is: the answer is the page, not a speech bubble.
+/// Only the person's own turns are bubbled — they are short and benefit from being visually
+/// attributable — while the model's reply runs full width as ordinary prose, because it is
+/// often several paragraphs and a bubble makes long text harder to read, not easier.
 ///
 /// Conversations live on the console backend, which persists them and forwards the question to
 /// brain. Past conversations read fine offline from cache; asking a new one does not, and says
@@ -54,10 +60,9 @@ class _SessionList extends StatelessWidget {
           ? _EmptyChats(offline: offline)
           : RefreshIndicator(
               onRefresh: state.loadSessions,
-              child: ListView.separated(
-                padding: const EdgeInsets.only(bottom: 88),
+              child: ListView.builder(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 96),
                 itemCount: sessions.length,
-                separatorBuilder: (_, __) => Divider(height: 1, color: scheme.outlineVariant),
                 itemBuilder: (_, i) {
                   final session = sessions[i];
                   return Dismissible(
@@ -65,26 +70,55 @@ class _SessionList extends StatelessWidget {
                     direction: DismissDirection.endToStart,
                     background: Container(
                       alignment: Alignment.centerRight,
+                      margin: const EdgeInsets.only(bottom: 6),
                       padding: const EdgeInsets.only(right: 20),
-                      color: scheme.errorContainer,
+                      decoration: BoxDecoration(
+                        color: scheme.errorContainer,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
                       child: Icon(Icons.delete_outline, color: scheme.onErrorContainer),
                     ),
                     onDismissed: (_) => state.deleteChat(session.id),
-                    child: ListTile(
-                      title: Text(
-                        session.displayTitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 15),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => state.openChat(session.id),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      session.displayTitle,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 15.5,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    if (session.updatedAt != null) ...[
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        _when(session.updatedAt!),
+                                        style: TextStyle(
+                                          fontSize: 12.5,
+                                          color: scheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              Icon(Icons.chevron_right, size: 20, color: scheme.outline),
+                            ],
+                          ),
+                        ),
                       ),
-                      subtitle: session.updatedAt == null
-                          ? null
-                          : Text(
-                              _when(session.updatedAt!),
-                              style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant),
-                            ),
-                      trailing: Icon(Icons.chevron_right, color: scheme.outline),
-                      onTap: () => state.openChat(session.id),
                     ),
                   );
                 },
@@ -95,13 +129,14 @@ class _SessionList extends StatelessWidget {
           : FloatingActionButton.extended(
               onPressed: state.startChat,
               icon: const Icon(Icons.add),
-              label: const Text('Ask'),
+              label: const Text('New chat'),
             ),
     );
   }
 
   static String _when(DateTime when) {
     final diff = DateTime.now().difference(when);
+    if (diff.inMinutes < 1) return 'just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
     if (diff.inHours < 24) return '${diff.inHours} h ago';
     return '${diff.inDays} d ago';
@@ -137,8 +172,7 @@ class _EmptyChats extends StatelessWidget {
               offline
                   ? 'Conversations you have already had will be readable here without a '
                       'connection. Asking something new needs the network.'
-                  : '"What deadlines do I have this week?" · "Did anything come in about '
-                      'placements?" · "What did I miss?"',
+                  : 'Deadlines, who wrote about what, or what you missed while you were away.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13.5, color: scheme.onSurfaceVariant, height: 1.5),
             ),
@@ -232,12 +266,12 @@ class _ConversationState extends State<_Conversation> {
         children: [
           Expanded(
             child: session.messages.isEmpty
-                ? const _AskSomething()
+                ? _AskSomething(onPick: (q) => _input.text = q)
                 : ListView.builder(
                     controller: _scroll,
-                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
+                    padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
                     itemCount: session.messages.length,
-                    itemBuilder: (_, i) => _Bubble(
+                    itemBuilder: (_, i) => _Turn(
                       message: session.messages[i],
                       voice: _voice,
                       canSpeak: state.voice.configured,
@@ -267,28 +301,76 @@ class _ConversationState extends State<_Conversation> {
   }
 }
 
+/// The opening screen of a new conversation: a prompt and a few things worth asking, which fill
+/// the field rather than sending, so the question can be edited before it costs a model call.
 class _AskSomething extends StatelessWidget {
-  const _AskSomething();
+  const _AskSomething({required this.onPick});
+
+  final ValueChanged<String> onPick;
+
+  static const _suggestions = [
+    'What deadlines do I have this week?',
+    'What did I miss while I was away?',
+    'Did anything come in about placements?',
+  ];
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 40),
-        child: Text(
-          'Ask anything about your mail — deadlines, who wrote about what, or what you missed '
-          'while you were away.',
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 60, 24, 24),
+      children: [
+        Text(
+          'What do you want to know?',
           textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant, height: 1.55),
+          style: TextStyle(
+            fontSize: 21,
+            fontWeight: FontWeight.w600,
+            color: scheme.onSurface,
+          ),
         ),
-      ),
+        const SizedBox(height: 8),
+        Text(
+          'Answers come from the mail already sorted on this account.',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 13.5, height: 1.5, color: scheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 26),
+        for (final suggestion in _suggestions)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Material(
+              color: scheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () => onPick(suggestion),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                  child: Row(
+                    children: [
+                      Icon(Icons.north_east, size: 16, color: scheme.onSurfaceVariant),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          suggestion,
+                          style: const TextStyle(fontSize: 14, height: 1.3),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
 
-class _Bubble extends StatelessWidget {
-  const _Bubble({required this.message, required this.voice, required this.canSpeak});
+/// One turn. The person's is a bubble; the assistant's is the page.
+class _Turn extends StatelessWidget {
+  const _Turn({required this.message, required this.voice, required this.canSpeak});
 
   final ChatMessage message;
   final Voice voice;
@@ -297,79 +379,119 @@ class _Bubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final isUser = message.isUser;
 
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.82),
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-        decoration: BoxDecoration(
-          color: isUser ? scheme.primaryContainer : scheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(14),
-            topRight: const Radius.circular(14),
-            bottomLeft: Radius.circular(isUser ? 14 : 4),
-            bottomRight: Radius.circular(isUser ? 4 : 14),
+    if (message.isUser) {
+      return Align(
+        alignment: Alignment.centerRight,
+        child: Container(
+          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
+          margin: const EdgeInsets.only(bottom: 20, left: 40),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+              bottomLeft: Radius.circular(20),
+              bottomRight: Radius.circular(6),
+            ),
+          ),
+          child: Text(
+            message.content,
+            style: TextStyle(fontSize: 15, height: 1.4, color: scheme.onSurface),
           ),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (message.pending)
+            _Thinking(scheme: scheme)
+          else
             SelectableText(
               message.content,
-              style: TextStyle(
-                fontSize: 14.5,
-                height: 1.45,
-                color: isUser ? scheme.onPrimaryContainer : scheme.onSurface,
-              ),
+              style: TextStyle(fontSize: 15.5, height: 1.6, color: scheme.onSurface),
             ),
-            if (message.pending) ...[
-              const SizedBox(height: 8),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    height: 11,
-                    width: 11,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.6,
-                      color: scheme.onPrimaryContainer.withValues(alpha: 0.7),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Reading your mail…',
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      color: scheme.onPrimaryContainer.withValues(alpha: 0.8),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-            if (!isUser && canSpeak && !message.pending) ...[
-              const SizedBox(height: 6),
-              InkWell(
-                onTap: () => voice.speak(context.read<AppState>(), message.content),
-                borderRadius: BorderRadius.circular(6),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 2),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.volume_up_outlined, size: 15, color: scheme.onSurfaceVariant),
-                      const SizedBox(width: 5),
-                      Text(
-                        'Listen',
-                        style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                      ),
-                    ],
-                  ),
+          if (!message.pending) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _TurnAction(
+                  icon: Icons.copy_outlined,
+                  label: 'Copy',
+                  onTap: () async {
+                    await Clipboard.setData(ClipboardData(text: message.content));
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Copied'), duration: Duration(seconds: 1)),
+                    );
+                  },
                 ),
-              ),
-            ],
+                if (canSpeak)
+                  _TurnAction(
+                    icon: Icons.volume_up_outlined,
+                    label: 'Listen',
+                    onTap: () => voice.speak(context.read<AppState>(), message.content),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _Thinking extends StatelessWidget {
+  const _Thinking({required this.scheme});
+
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          height: 13,
+          width: 13,
+          child: CircularProgressIndicator(strokeWidth: 1.8, color: scheme.onSurfaceVariant),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          'Reading your mail…',
+          style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant),
+        ),
+      ],
+    );
+  }
+}
+
+class _TurnAction extends StatelessWidget {
+  const _TurnAction({required this.icon, required this.label, required this.onTap});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 5),
+            Text(label, style: TextStyle(fontSize: 12.5, color: scheme.onSurfaceVariant)),
           ],
         ),
       ),
@@ -427,9 +549,8 @@ class _ComposerState extends State<_Composer> {
     if (!mounted) return;
     setState(() => _transcribing = false);
     if (text == null || text.isEmpty) return;
-    widget.controller.text = widget.controller.text.isEmpty
-        ? text
-        : '${widget.controller.text} $text';
+    widget.controller.text =
+        widget.controller.text.isEmpty ? text : '${widget.controller.text} $text';
   }
 
   @override
@@ -439,79 +560,126 @@ class _ComposerState extends State<_Composer> {
     final busy = widget.sending || _transcribing;
 
     return Container(
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        border: Border(top: BorderSide(color: scheme.outlineVariant)),
-      ),
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 12),
+      color: scheme.surface,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
       child: SafeArea(
         top: false,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Expanded(
-              child: TextField(
-                controller: widget.controller,
-                enabled: !busy,
-                minLines: 1,
-                maxLines: 5,
-                textCapitalization: TextCapitalization.sentences,
-                decoration: InputDecoration(
-                  hintText: _recording
-                      ? 'Listening — release to stop'
-                      : _transcribing
-                          ? 'Transcribing…'
-                          : widget.offline
-                              ? 'Asking needs a connection'
-                              : 'Ask about your mail',
-                  border: const OutlineInputBorder(),
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                ),
-              ),
-            ),
-            if (state.voice.configured && !widget.offline) ...[
-              const SizedBox(width: 4),
-              GestureDetector(
-                onLongPressStart: (_) => _startRecording(),
-                onLongPressEnd: (_) => _stopRecording(keep: true),
-                onLongPressCancel: () => _stopRecording(keep: false),
-                // Deliberately not an IconButton: this responds to press-and-hold, and an
-                // IconButton with a null onPressed renders greyed out as though unavailable.
-                child: Tooltip(
-                  message: 'Hold to speak',
-                  child: Container(
-                    width: 44,
-                    height: 44,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: _recording ? scheme.errorContainer : Colors.transparent,
-                    ),
-                    child: Icon(
-                      _recording ? Icons.mic : Icons.mic_none,
-                      color: busy
-                          ? scheme.onSurfaceVariant.withValues(alpha: 0.4)
-                          : _recording
-                              ? scheme.error
-                              : scheme.onSurfaceVariant,
-                    ),
+        child: Container(
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(26),
+            border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.7)),
+          ),
+          padding: const EdgeInsets.fromLTRB(18, 4, 6, 4),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: widget.controller,
+                  enabled: !busy,
+                  minLines: 1,
+                  maxLines: 5,
+                  textCapitalization: TextCapitalization.sentences,
+                  style: const TextStyle(fontSize: 15, height: 1.35),
+                  decoration: InputDecoration(
+                    hintText: _recording
+                        ? 'Listening — release to stop'
+                        : _transcribing
+                            ? 'Transcribing…'
+                            : widget.offline
+                                ? 'Asking needs a connection'
+                                : 'Ask about your mail',
+                    hintStyle: TextStyle(fontSize: 15, color: scheme.onSurfaceVariant),
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                 ),
               ),
+              if (state.voice.configured && !widget.offline)
+                GestureDetector(
+                  onLongPressStart: (_) => _startRecording(),
+                  onLongPressEnd: (_) => _stopRecording(keep: true),
+                  onLongPressCancel: () => _stopRecording(keep: false),
+                  // Deliberately not an IconButton: this responds to press-and-hold, and an
+                  // IconButton with a null onPressed renders greyed out as though unavailable.
+                  child: Tooltip(
+                    message: 'Hold to speak',
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _recording ? scheme.errorContainer : Colors.transparent,
+                      ),
+                      child: Icon(
+                        _recording ? Icons.mic : Icons.mic_none,
+                        size: 21,
+                        color: busy
+                            ? scheme.onSurfaceVariant.withValues(alpha: 0.4)
+                            : _recording
+                                ? scheme.error
+                                : scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+              const SizedBox(width: 2),
+              _SendButton(
+                sending: widget.sending,
+                enabled: !busy && !widget.offline,
+                onSend: widget.onSend,
+              ),
             ],
-            const SizedBox(width: 2),
-            IconButton.filled(
-              onPressed: busy || widget.offline ? null : widget.onSend,
-              icon: widget.sending
-                  ? const SizedBox(
-                      height: 18,
-                      width: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.arrow_upward),
-            ),
-          ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SendButton extends StatelessWidget {
+  const _SendButton({required this.sending, required this.enabled, required this.onSend});
+
+  final bool sending;
+  final bool enabled;
+  final VoidCallback onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Material(
+        color: enabled ? scheme.primary : scheme.surfaceContainerHighest,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: enabled ? onSend : null,
+          child: SizedBox(
+            width: 40,
+            height: 40,
+            child: sending
+                ? Center(
+                    child: SizedBox(
+                      height: 17,
+                      width: 17,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: scheme.onPrimary,
+                      ),
+                    ),
+                  )
+                : Icon(
+                    Icons.arrow_upward,
+                    size: 20,
+                    color: enabled ? scheme.onPrimary : scheme.onSurfaceVariant,
+                  ),
+          ),
         ),
       ),
     );

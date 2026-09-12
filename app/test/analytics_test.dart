@@ -77,18 +77,21 @@ void main() {
     expect(find.byKey(const ValueKey('segment:2026-09-12:Newsletters')), findsNothing);
   });
 
-  testWidgets('the data table carries every number as text', (tester) async {
+  testWidgets('the breakdown carries every number as text, not only as colour', (tester) async {
     await _pump(tester, _state());
 
     // Below the fold in a test viewport, so the ListView has not built it yet.
     await tester.dragUntilVisible(
-      find.text('DATA TABLE'),
+      find.text('BREAKDOWN'),
       find.byType(ListView),
       const Offset(0, -220),
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('DATA TABLE'), findsOneWidget);
+    expect(find.text('BREAKDOWN'), findsOneWidget);
     expect(find.text('2026-09-12'), findsWidgets);
+    // The per-category counts are spelled out, so the series colours are never load-bearing.
+    expect(find.text('Placements 2'), findsOneWidget);
+    expect(find.text('7 threads'), findsOneWidget);
   });
 }

@@ -873,7 +873,16 @@ class _Footer extends StatelessWidget {
           ),
         );
 
-    return Column(
+    // Backed rather than floating bare over the canvas: nodes pan underneath this, and unbacked
+    // text on top of node cards was unreadable.
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        color: Color.alphaBlend(palette.bg.withValues(alpha: 0.92), palette.panel),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: palette.line),
+      ),
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
@@ -905,6 +914,7 @@ class _Footer extends StatelessWidget {
           style: TextStyle(fontSize: 11, color: palette.muted),
         ),
       ],
+      ),
     );
   }
 }

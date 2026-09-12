@@ -80,6 +80,17 @@ class Api {
     return jsonDecode(res.body);
   }
 
+  /// Reads a field the API promised to send.
+  ///
+  /// A malformed or unexpected body is a server problem, not a crash: raising ApiException here
+  /// means it surfaces as the same quiet message every other failed request does, instead of a
+  /// TypeError escaping into the widget tree as a red screen.
+  String _requireString(Object? data, String field, String action) {
+    final value = data is Map<String, dynamic> ? data[field] : null;
+    if (value is String && value.isNotEmpty) return value;
+    throw ApiException(502, "The server's response to $action could not be read.");
+  }
+
   String _describe(http.Response res) {
     try {
       final decoded = jsonDecode(res.body);
@@ -104,7 +115,7 @@ class Api {
   Future<String> login(String email, String password) async {
     final data = await _send('POST', _console('/auth/login'),
         body: {'email': email, 'password': password});
-    final issued = (data as Map<String, dynamic>)['token'] as String;
+    final issued = _requireString(data, 'token', 'signing in');
     token = issued;
     return issued;
   }
@@ -159,7 +170,7 @@ class Api {
   /// it flips to connected.
   Future<String> beginGmailConnect() async {
     final data = await _send('POST', _brain('/api/mail/connect'));
-    return (data as Map<String, dynamic>)['auth_url'] as String;
+    return _requireString(data, 'auth_url', 'connecting your account');
   }
 
   Future<Map<String, dynamic>> askMail(String question) async =>
@@ -344,7 +355,7 @@ class Api {
 
   Future<String> beginCalendarConnect() async {
     final data = await _send('POST', _brain('/api/calendar/connect'));
-    return (data as Map<String, dynamic>)['auth_url'] as String;
+    return _requireString(data, 'auth_url', 'connecting your account');
   }
 
   Future<MailStatus> disconnectCalendar() async {
