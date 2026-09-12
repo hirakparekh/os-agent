@@ -26,30 +26,28 @@ class HomeTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    final hasNothing = state.urgent.isEmpty && state.actions.isEmpty;
 
     return RefreshIndicator(
       onRefresh: state.refresh,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
         children: [
           if (state.lastSynced != null) _SyncedAgo(when: state.lastSynced!),
           const _QuickActions(),
-          const SizedBox(height: 24),
-          if (hasNothing)
-            const _EmptyToday()
-          else ...[
-            if (state.urgent.isNotEmpty) ...[
-              _SectionHeader(label: 'Needs attention', count: state.urgent.length),
-              const SizedBox(height: 8),
-              ...state.urgent.map((t) => _UrgentCard(thread: t)),
-              const SizedBox(height: 24),
-            ],
-            if (state.actions.isNotEmpty) ...[
-              _SectionHeader(label: 'Action items', count: state.actions.length),
-              const SizedBox(height: 8),
-              ...state.actions.map((a) => _ActionCard(item: a)),
-            ],
+          // Nothing stands in for an empty feed: the cards are the screen when there is
+          // nothing to act on, rather than being pushed into a corner by a paragraph
+          // explaining that there is nothing to act on.
+          if (state.urgent.isNotEmpty) ...[
+            const SizedBox(height: 28),
+            _SectionHeader(label: 'Needs attention', count: state.urgent.length),
+            const SizedBox(height: 10),
+            ...state.urgent.map((t) => _UrgentCard(thread: t)),
+          ],
+          if (state.actions.isNotEmpty) ...[
+            const SizedBox(height: 28),
+            _SectionHeader(label: 'Action items', count: state.actions.length),
+            const SizedBox(height: 10),
+            ...state.actions.map((a) => _ActionCard(item: a)),
           ],
         ],
       ),
@@ -73,44 +71,58 @@ class _QuickActions extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
 
-    return GridView.count(
-      crossAxisCount: 2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 10,
-      crossAxisSpacing: 10,
-      childAspectRatio: 2.5,
+    return Column(
       children: [
-        _ActionTile(
-          icon: state.syncing ? null : Icons.sync,
-          label: state.syncing ? (state.syncStage ?? 'Syncing…') : 'Sync mail',
+        // Sync is the one action with a duty cycle — it is the reason to open the app after a
+        // few hours away — so it gets the full width and carries its own progress.
+        _HeroCard(
+          icon: Icons.sync,
+          title: state.syncing ? 'Syncing your mail' : 'Sync mail',
+          subtitle: state.syncing
+              ? (state.syncStage ?? 'Fetching and sorting…')
+              : 'Fetch what arrived and sort it',
           tint: _sync,
           busy: state.syncing,
           onTap: state.syncing ? null : () => state.runSync(),
         ),
-        _ActionTile(
-          icon: Icons.rule,
-          label: 'Needs a decision',
-          tint: _review,
-          onTap: () => _open(context, const ReviewScreen()),
-        ),
-        _ActionTile(
-          icon: Icons.bar_chart,
-          label: 'Analytics',
-          tint: _analytics,
-          onTap: () => _open(context, const AnalyticsScreen()),
-        ),
-        _ActionTile(
-          icon: Icons.person_outline,
-          label: 'About you',
-          tint: _about,
-          onTap: () => _open(context, const ProfileScreen()),
-        ),
-        _ActionTile(
-          icon: Icons.settings_outlined,
-          label: 'Settings',
-          tint: _settings,
-          onTap: () => _open(context, const SettingsScreen()),
+        const SizedBox(height: 12),
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: 1.02,
+          children: [
+            _ActionTile(
+              icon: Icons.rule,
+              label: 'Needs a decision',
+              detail: 'Threads filed with low confidence',
+              tint: _review,
+              onTap: () => _open(context, const ReviewScreen()),
+            ),
+            _ActionTile(
+              icon: Icons.bar_chart,
+              label: 'Analytics',
+              detail: 'Volume by category over time',
+              tint: _analytics,
+              onTap: () => _open(context, const AnalyticsScreen()),
+            ),
+            _ActionTile(
+              icon: Icons.person_outline,
+              label: 'About you',
+              detail: 'Facts the assistant can use',
+              tint: _about,
+              onTap: () => _open(context, const ProfileScreen()),
+            ),
+            _ActionTile(
+              icon: Icons.settings_outlined,
+              label: 'Settings',
+              detail: 'Connections and processing',
+              tint: _settings,
+              onTap: () => _open(context, const SettingsScreen()),
+            ),
+          ],
         ),
       ],
     );
@@ -121,17 +133,31 @@ class _QuickActions extends StatelessWidget {
   }
 }
 
-class _ActionTile extends StatelessWidget {
-  const _ActionTile({
+/// Tint mixed against the surface rather than being a fixed fill: one hue then works in both
+/// themes, where a pastel would go muddy in the dark and a dark fill would vanish in the light.
+({Color background, Color foreground, Color chip}) _tones(BuildContext context, Color tint) {
+  final scheme = Theme.of(context).colorScheme;
+  final dark = Theme.of(context).brightness == Brightness.dark;
+  return (
+    background: Color.alphaBlend(tint.withValues(alpha: dark ? 0.20 : 0.11), scheme.surface),
+    foreground: dark ? Color.alphaBlend(tint.withValues(alpha: 0.65), Colors.white) : tint,
+    chip: Color.alphaBlend(tint.withValues(alpha: dark ? 0.32 : 0.18), scheme.surface),
+  );
+}
+
+class _HeroCard extends StatelessWidget {
+  const _HeroCard({
     required this.icon,
-    required this.label,
+    required this.title,
+    required this.subtitle,
     required this.tint,
     required this.onTap,
     this.busy = false,
   });
 
-  final IconData? icon;
-  final String label;
+  final IconData icon;
+  final String title;
+  final String subtitle;
   final Color tint;
   final VoidCallback? onTap;
   final bool busy;
@@ -139,48 +165,128 @@ class _ActionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    // Mixed against the surface so one hue works in both themes: a fixed pastel would go muddy
-    // in dark mode, a fixed dark fill would disappear in light mode.
-    final background = Color.alphaBlend(tint.withValues(alpha: dark ? 0.22 : 0.12), scheme.surface);
-    final foreground = dark ? Color.alphaBlend(tint.withValues(alpha: 0.6), Colors.white) : tint;
+    final tones = _tones(context, tint);
 
     return Material(
-      color: background,
-      borderRadius: BorderRadius.circular(14),
+      color: tones.background,
+      borderRadius: BorderRadius.circular(20),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(20),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
           child: Row(
             children: [
-              SizedBox(
-                width: 30,
-                height: 30,
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: tones.chip,
+                  borderRadius: BorderRadius.circular(16),
+                ),
                 child: busy
                     ? Center(
                         child: SizedBox(
-                          height: 16,
-                          width: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: foreground),
+                          height: 22,
+                          width: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.4,
+                            color: tones.foreground,
+                          ),
                         ),
                       )
-                    : Icon(icon, size: 21, color: foreground),
+                    : Icon(icon, size: 26, color: tones.foreground),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 16),
               Expanded(
-                child: Text(
-                  label,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13.5,
-                    height: 1.2,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurface,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: scheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+                    ),
+                  ],
                 ),
+              ),
+              Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionTile extends StatelessWidget {
+  const _ActionTile({
+    required this.icon,
+    required this.label,
+    required this.detail,
+    required this.tint,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final String detail;
+  final Color tint;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final tones = _tones(context, tint);
+
+    return Material(
+      color: tones.background,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: tones.chip,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, size: 23, color: tones.foreground),
+              ),
+              const Spacer(),
+              Text(
+                label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 15.5,
+                  height: 1.15,
+                  fontWeight: FontWeight.w700,
+                  color: scheme.onSurface,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                detail,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, height: 1.3, color: scheme.onSurfaceVariant),
               ),
             ],
           ),
@@ -395,43 +501,6 @@ class _SyncedAgo extends StatelessWidget {
     if (diff.inMinutes < 60) return '${diff.inMinutes} min ago';
     if (diff.inHours < 24) return '${diff.inHours} h ago';
     return '${diff.inDays} d ago';
-  }
-}
-
-/// Shown when both feeds are empty — which is a real and correct state, not a failure.
-///
-/// Urgency and action items are computed during ingest, so threads that predate those
-/// features carry neither until the next sync. Saying so here saves someone debugging a
-/// working system.
-class _EmptyToday extends StatelessWidget {
-  const _EmptyToday();
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(top: 40),
-      child: Column(
-        children: [
-          Icon(Icons.done_all, size: 44, color: scheme.outline),
-          const SizedBox(height: 16),
-          const Text(
-            'Nothing needs you right now',
-            style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Text(
-              'Urgent threads and to-dos are picked out while mail syncs. If you have just '
-              'added this account, run a sync to fill this in.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13.5, color: scheme.onSurfaceVariant, height: 1.45),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 }
 
