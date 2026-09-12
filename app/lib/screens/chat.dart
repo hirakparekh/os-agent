@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../answer_text.dart';
 import '../app_state.dart';
 import '../models.dart';
 import '../voice.dart';
@@ -412,8 +413,8 @@ class _Turn extends StatelessWidget {
           if (message.pending)
             _Thinking(scheme: scheme)
           else
-            SelectableText(
-              message.content,
+            AnswerText(
+              text: message.content,
               style: TextStyle(fontSize: 15.5, height: 1.6, color: scheme.onSurface),
             ),
           if (!message.pending) ...[

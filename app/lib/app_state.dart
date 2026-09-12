@@ -290,12 +290,19 @@ class AppState extends ChangeNotifier {
 
     try {
       final answer = await api.sendChatMessage(session.id, question.trim());
-      final settled = openSession!.messages
+
+      // Minutes can pass inside that await. The conversation may have been closed, or another
+      // one opened, and the reply belongs to neither — dereferencing openSession! here threw a
+      // null-check error in an async gap, where no error widget can catch it.
+      final current = openSession;
+      if (current == null || current.id != session.id) return;
+
+      final settled = current.messages
           .map((m) => m.pending ? ChatMessage(role: m.role, content: m.content) : m)
           .toList();
       openSession = ChatSession(
         id: session.id,
-        title: openSession!.title,
+        title: current.title,
         updatedAt: DateTime.now(),
         messages: [...settled, answer],
       );
