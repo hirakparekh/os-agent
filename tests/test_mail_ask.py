@@ -41,7 +41,7 @@ def _seed_thread(conn, cat_title, topic_title, thread_id, title, summary, body):
 def test_ask_mail_empty_tree_returns_canned_message_without_calling_llm(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
 
-    def boom(prompt):
+    def boom(prompt, **kwargs):
         raise AssertionError("should not call the LLM on an empty tree")
 
     monkeypatch.setattr(mail_ask, "call_openrouter", boom)
@@ -71,7 +71,7 @@ def test_ask_mail_includes_matching_thread_body_in_prompt(tmp_path, monkeypatch)
     )
     captured = {}
 
-    def fake_call(prompt):
+    def fake_call(prompt, **kwargs):
         captured["prompt"] = prompt
         return "You have an interview Monday at 10am."
 
@@ -99,7 +99,7 @@ def test_ask_mail_respects_top_k(tmp_path, monkeypatch):
         )
     captured = {}
     monkeypatch.setattr(
-        mail_ask, "call_openrouter", lambda p: captured.setdefault("prompt", p) or "ok"
+        mail_ask, "call_openrouter", lambda p, **kw: captured.setdefault("prompt", p) or "ok"
     )
     mail_ask.ask_mail(conn, "interview call", top_k=3)
     assert captured["prompt"].count("### ") == 3
@@ -110,7 +110,7 @@ def test_ask_mail_folds_profile_details_into_prompt(tmp_path, monkeypatch):
     _seed_thread(conn, "Placements", "Acme", "mail:thread:1", "Interview", "s", "interview body")
     captured = {}
     monkeypatch.setattr(
-        mail_ask, "call_openrouter", lambda p: captured.setdefault("prompt", p) or "ok"
+        mail_ask, "call_openrouter", lambda p, **kw: captured.setdefault("prompt", p) or "ok"
     )
     mail_ask.ask_mail(conn, "interview", [{"key": "Timezone", "value": "IST"}])
     assert "Timezone: IST" in captured["prompt"]
@@ -250,7 +250,7 @@ def _two_threads(conn):
 def _capture(monkeypatch):
     captured = {}
 
-    def fake(prompt):
+    def fake(prompt, **kwargs):
         captured["prompt"] = prompt
         return "ok"
 

@@ -17,7 +17,7 @@ import logging
 from datetime import date, datetime
 from typing import Any
 
-from brain import bm25, calendar_tool, chat_pins, mail_timeline, profile, store
+from brain import bm25, calendar_tool, chat_pins, mail_ingest, mail_timeline, profile, store
 from brain.openrouter import call_openrouter
 
 _log = logging.getLogger(__name__)
@@ -133,6 +133,25 @@ def _rank_threads(
     return [(by_id[tid], score) for tid, score in ranked if score > 0][:top_k]
 
 
+def _rank_category(question: str, conn: Any) -> str | None:
+    """Use the tree itself to narrow search — the exact same tuned keyword classifier that
+    files mail into categories at ingest time (score_categories + its proven confidence
+    check), run on the question instead of an email. "What companies reached out for
+    placements?" hits the same "placement"/"internship" vocabulary a real placement email
+    would, so full-text expansion narrows to Placements specifically instead of every thread
+    that loosely shares a generic word like "workshop" or "application".
+
+    Returns None on a weak/ambiguous signal (the question doesn't confidently land in one
+    category) so the caller falls back to searching everything — a broad question must never
+    see less than it would have before this existed.
+    """
+    config = mail_ingest.config_with_learned(conn, mail_ingest.load_config())
+    ranked = mail_ingest.score_categories(question, "", "", config)
+    if not mail_ingest._is_confident(ranked):
+        return None
+    return ranked[0][0]
+
+
 def _overview_attachment_note(thread: dict[str, Any]) -> str:
     """A compact attachment marker for the one-line overview.
 
@@ -206,6 +225,19 @@ def _format_dated_items(rows: list[tuple[str, str, dict[str, Any]]], today: date
     return "\n".join(lines) or "(no dated items found in the mail)"
 
 
+# Caps for the full-text expansion — measured live: the two longest of 8 expanded threads on a
+# real question were 9,515 and 7,450 characters (verbose attachment findings mostly), against a
+# median around 2,000. Truncating outliers here, not the common case, is most of the actual
+# token-size problem: see docs/pitch-notes-cost-analysis.md.
+BODY_CHAR_CAP = 4000
+FINDING_CHAR_CAP = 500
+
+
+def _truncate(text: str, cap: int) -> str:
+    text = text or ""
+    return text if len(text) <= cap else text[:cap].rstrip() + " …(truncated)"
+
+
 def _format_attachments(thread: dict[str, Any]) -> str:
     """What was found inside this thread's attachments, including whether it named the user.
 
@@ -223,13 +255,13 @@ def _format_attachments(thread: dict[str, Any]) -> str:
         kind = finding.get("kind", "file")
         mentions = finding.get("mentions_you") or []
         marker = f" [NAMES THE USER: {', '.join(map(str, mentions))}]" if mentions else ""
-        detail = finding.get("finding")
+        detail = _truncate(str(finding.get("finding") or ""), FINDING_CHAR_CAP)
         lines.append(f"- {name} ({kind}){marker}: {detail}")
     return "\nAttachments:\n" + "\n".join(lines) if lines else ""
 
 
 def _format_full_thread(cat: str, topic: str, thread: dict[str, Any]) -> str:
-    body = (thread.get("data") or {}).get("body") or "(no body captured)"
+    body = _truncate((thread.get("data") or {}).get("body") or "(no body captured)", BODY_CHAR_CAP)
     # Attachments precede the prose. A summary is written by the model at ingest and can go
     # stale — one here read "attachments indicate the sender was not listed" for a spreadsheet
     # that does name the user — so the scanned facts must be read first, not last.
@@ -330,12 +362,29 @@ def _choose_context(
     and never a rewrite. The pin is updated only when the ranking wins, so a run of vague
     follow-ups all resolve against the same thread.
     """
-    ranked = _rank_threads(question, rows, top_k=top_k)
-    top_score = ranked[0][1] if ranked else 0.0
+    # The fresh-vs-follow-up decision rides the FULL corpus ranking, unchanged — narrowing the
+    # candidate pool shifts BM25's score scale (fewer documents changes its IDF math: the same
+    # real question scored 3.29 against the full 14-thread mailbox but only 0.86 against a
+    # narrowed 5-thread one), and FOLLOW_UP_SCORE_FLOOR was tuned empirically against the full
+    # corpus. Recalibrating it against a variable-size narrowed pool would silently invalidate
+    # that tuning.
+    ranked_full = _rank_threads(question, rows, top_k=top_k)
+    top_score = ranked_full[0][1] if ranked_full else 0.0
     pinned_id = chat_pins.get_pin(conn, session_id)
 
-    if ranked and top_score >= FOLLOW_UP_SCORE_FLOOR:
-        context = [row for row, _ in ranked]
+    if ranked_full and top_score >= FOLLOW_UP_SCORE_FLOOR:
+        # Only once this is confidently a real, specific question does narrowing kick in — to
+        # pick which threads are worth full-text expansion, not whether to expand at all. Uses
+        # the tree's own matching category when confident; falls back to the full corpus (same
+        # `ranked_full` already computed above) on any ambiguous question, so a narrow match
+        # never hides anything a broad question would have seen.
+        narrowed_category = _rank_category(question, conn)
+        ranked = (
+            _rank_threads(question, [r for r in rows if r[0] == narrowed_category], top_k=top_k)
+            if narrowed_category
+            else ranked_full
+        )
+        context = [row for row, _ in ranked] or [row for row, _ in ranked_full]
         winner = context[0][2]["id"]
         # Carry the thread the conversation was already about, so "how does that compare?"
         # still has both in view. It goes last: the fresh match is what the question asked for.
@@ -348,7 +397,7 @@ def _choose_context(
         # Too vague to rank: "when is it due?" shares no words with the thread it means, so the
         # ranking is noise. Answer from what the session is already about, and leave the pin.
         carried = _find_row(rows, pinned_id)
-        context = [carried] if carried is not None else [row for row, _ in ranked]
+        context = [carried] if carried is not None else [row for row, _ in ranked_full]
         decision = "pinned" if carried is not None else "unranked"
 
     # The tuning data for FOLLOW_UP_SCORE_FLOOR. Lands in the brain log next to the request.
@@ -400,5 +449,7 @@ def ask_mail(
     )
     following = top_threads[0][2]["title"] if decision == "pinned" and top_threads else None
     prompt = build_prompt(question, rows, top_threads, merged, user_id, follow_up_about=following)
-    reply = call_openrouter(prompt)
+    # Safety net, not a tuned cost cut — see call_openrouter's docstring. Worst real completion
+    # observed for this call is 1,217 tokens; 4000 leaves wide headroom.
+    reply = call_openrouter(prompt, max_tokens=4000)
     return {"answer": reply.strip()}

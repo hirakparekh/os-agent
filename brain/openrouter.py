@@ -66,28 +66,41 @@ def call_openrouter_vision(prompt: str, image_data_url: str, *, model: str | Non
     )
 
 
-def call_openrouter(prompt: str, *, model: str | None = None) -> str:
+def call_openrouter(prompt: str, *, model: str | None = None, max_tokens: int | None = None) -> str:
     """Send `prompt` as a single user message; return the model's text reply.
 
     Tries each key in OPENROUTER_API_KEYS in turn, rotating forward whenever a key is
     rejected or rate/quota-limited (401/402/429), so one exhausted free-tier key doesn't
     stop the run.
+
+    `max_tokens`, when given, is a safety net against true runaway generation — NOT tuned as a
+    cost-reduction lever. Reasoning-capable free models spend a large, unpredictable share of
+    their completion budget on hidden chain-of-thought before the visible answer (observed:
+    72-95% of completion_tokens on this pipeline's real calls); a cap set too tight can cut the
+    response off mid-reasoning, before it ever reaches the actual answer, breaking JSON parsing
+    entirely. Pass a generous value unless you've live-verified a tighter one doesn't truncate.
     """
     model = model or os.environ.get("OPENROUTER_MODEL", DEFAULT_MODEL)
-    return _post([{"role": "user", "content": prompt}], model)
+    return _post([{"role": "user", "content": prompt}], model, max_tokens=max_tokens)
 
 
-def _post(messages: list[dict[str, Any]], model: str) -> str:
+def _post(
+    messages: list[dict[str, Any]], model: str, *, max_tokens: int | None = None
+) -> str:
     """POST a chat completion, rotating through keys. Shared by the text and vision helpers."""
     keys = _keys()
     last_error = ""
+
+    payload: dict[str, Any] = {"model": model, "messages": messages}
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
 
     for key in keys:
         try:
             response = requests.post(
                 _url(),
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"model": model, "messages": messages},
+                json=payload,
                 timeout=TIMEOUT_S,
             )
         except requests.RequestException as exc:

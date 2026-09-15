@@ -182,7 +182,7 @@ DEFAULT_CONFIG = {
     # Anything that counts as "you" inside an attachment — name, roll/neo id, registration
     # number. Used to answer "am I on this shortlist?" (see brain/mail_attachments.py).
     "identifiers": [],
-    "seeded_categories": ["Lectures & Profs", "Placements", "General College"],
+    "seeded_categories": ["Lectures & Profs", "Placements", "General College", "Account Security"],
     "category_keywords": {
         "Lectures & Profs": [
             "lecture",
@@ -318,6 +318,33 @@ DEFAULT_CONFIG = {
             "timetable",
             "holiday",
             "notice",
+        ],
+        # Real gap found live: the LLM independently proposed "Cybersecurity" as a category
+        # twice on real mail (a Google account-security alert), but no such category existed in
+        # the schema, so it fell through to sender-domain precedent and landed under
+        # Placements — the sender happened to also be a real placement contact. This is the
+        # deterministic catch that should have caught it in the first place.
+        "Account Security": [
+            "security alert",
+            "unauthorized access",
+            "suspicious activity",
+            "suspicious sign-in",
+            "suspicious login",
+            "new sign-in",
+            "sign-in attempt",
+            "verify it's you",
+            "was this you",
+            "account data",
+            "account access",
+            "password changed",
+            "password reset",
+            "two-factor",
+            "2fa",
+            "recovery email",
+            "recovery phone",
+            "data breach",
+            "you shared",
+            "data shared",
         ],
     },
     # A negative phrase in the SUBJECT vetoes that category outright ("Yoga Competition" is
@@ -652,7 +679,10 @@ def classify_email(
         '{"category": "<name>", "new_category": true|false, "topic": "<name>", '
         '"new_topic": true|false}'
     )
-    raw = _strip_fences(call_openrouter(prompt))
+    # Safety net, not a tuned cost cut — see call_openrouter's docstring. Worst real completion
+    # observed for this call is 877 tokens; 3000 leaves wide headroom while still bounding a
+    # true runaway.
+    raw = _strip_fences(call_openrouter(prompt, max_tokens=3000))
     return json.loads(raw)
 
 
@@ -695,7 +725,8 @@ def merge_or_create_thread(
         "If merging, write an updated body that folds the new information into "
         "the existing one coherently (a running picture, not a raw concatenation) "
         "and a fresh short summary.\n"
-        "If new, write a body and summary for just this email.\n\n"
+        "If new, write ONLY a short summary — leave body as an empty string; the "
+        "caller fills it in from the original email directly, so don't retype it.\n\n"
         "Separately, decide whether this email describes something happening at a specific, "
         "concrete date/time — an interview, exam, meeting, deadline, competition, festival, "
         "or similar — as opposed to a vague or ongoing topic with no fixed occurrence. "
@@ -709,7 +740,8 @@ def merge_or_create_thread(
         f"Attachment findings:\n{findings_text}\n\n"
         "Reply with ONLY this JSON object, nothing else:\n"
         '{"action": "merge"|"new", "merge_into_id": "<id or null>", '
-        '"summary": "<routing digest, <=120 words>", "body": "<full content>", '
+        '"summary": "<routing digest, <=120 words>", '
+        '"body": "<full merged content if action is merge, else empty string>", '
         '"event": {"has_event": true|false, "kind": "deadline"|"event", '
         '"title": "<short event title, or empty>", '
         '"start": "<YYYY-MM-DD, or YYYY-MM-DDTHH:MM:SS if a specific time is given; '
@@ -717,8 +749,17 @@ def merge_or_create_thread(
         '"end": "<same format, or empty to default to start + 1 hour>", '
         '"location": "<or empty>"}}'
     )
-    raw = _strip_fences(call_openrouter(prompt))
-    return json.loads(raw)
+    # Safety net, not a tuned cost cut — see call_openrouter's docstring. Worst real completion
+    # observed for this call is 2,857 tokens; 6000 leaves wide headroom while still bounding a
+    # true runaway (one alternate model produced over 7,000 on the same prompt shape).
+    raw = _strip_fences(call_openrouter(prompt, max_tokens=6000))
+    result = json.loads(raw)
+    # The model is told not to retype the body for a new thread (see prompt above) — fill it in
+    # from the source email directly instead of spending completion tokens to regenerate text
+    # that's already sitting right there in the prompt.
+    if result.get("action") == "new" and not (result.get("body") or "").strip():
+        result["body"] = email.get("body_text", "")
+    return result
 
 
 # A BM25 score this high against an existing thread's summary is treated as "clearly a later

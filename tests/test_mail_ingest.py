@@ -8,7 +8,12 @@ from brain import profile as brain_profile
 
 def test_load_config_defaults_when_missing(tmp_path):
     cfg = mail_ingest.load_config(tmp_path / "nope.json")
-    assert cfg["seeded_categories"] == ["Lectures & Profs", "Placements", "General College"]
+    assert cfg["seeded_categories"] == [
+        "Lectures & Profs",
+        "Placements",
+        "General College",
+        "Account Security",
+    ]
     assert cfg["student_id"] == ""
 
 
@@ -17,7 +22,12 @@ def test_load_config_merges_file_over_defaults(tmp_path):
     path.write_text(json.dumps({"student_id": "S1"}), encoding="utf-8")
     cfg = mail_ingest.load_config(path)
     assert cfg["student_id"] == "S1"
-    assert cfg["seeded_categories"] == ["Lectures & Profs", "Placements", "General College"]
+    assert cfg["seeded_categories"] == [
+        "Lectures & Profs",
+        "Placements",
+        "General College",
+        "Account Security",
+    ]
 
 
 def test_slugify():
@@ -67,7 +77,7 @@ def test_guess_category_bm25_returns_none_below_the_absolute_floor():
 
 def test_classify_email_parses_llm_json(monkeypatch):
     reply = '{"category": "Placements", "new_category": false, "topic": "Acme", "new_topic": true}'
-    monkeypatch.setattr(mail_ingest, "call_openrouter", lambda prompt: reply)
+    monkeypatch.setattr(mail_ingest, "call_openrouter", lambda prompt, **kwargs: reply)
     result = mail_ingest.classify_email(
         {"from": "a@x.com", "subject": "Interview", "body_text": "..."},
         [],
@@ -86,7 +96,7 @@ def test_classify_email_strips_markdown_fences(monkeypatch):
         '```json\n{"category": "Placements", "new_category": false, '
         '"topic": "Acme", "new_topic": false}\n```'
     )
-    monkeypatch.setattr(mail_ingest, "call_openrouter", lambda prompt: reply)
+    monkeypatch.setattr(mail_ingest, "call_openrouter", lambda prompt, **kwargs: reply)
     result = mail_ingest.classify_email({"from": "a", "subject": "s", "body_text": "b"}, [], [])
     assert result["category"] == "Placements"
 
@@ -95,7 +105,9 @@ def test_merge_or_create_thread_parses_llm_json(monkeypatch):
     monkeypatch.setattr(
         mail_ingest,
         "call_openrouter",
-        lambda prompt: '{"action": "new", "merge_into_id": null, "summary": "s", "body": "b"}',
+        lambda prompt, **kwargs: (
+            '{"action": "new", "merge_into_id": null, "summary": "s", "body": "b"}'
+        ),
     )
     result = mail_ingest.merge_or_create_thread(
         {"from": "a", "subject": "s", "body_text": "b"},
@@ -1325,9 +1337,13 @@ def test_two_identical_emails_from_one_sender_land_together(tmp_path, monkeypatc
     first = mail_ingest.ingest_email(conn, dict(alert), _defaults())
     second = mail_ingest.ingest_email(conn, {**alert, "uid": "2"}, _defaults())
 
-    # The model said "Placements" the second time; precedent overruled it.
-    assert first["category"] == "Security Alerts"
-    assert second["category"] == "Security Alerts"
+    # DEFAULT_CONFIG now has a real "Account Security" keyword vocabulary (added after this
+    # exact scenario — an unstable LLM guessing a nonexistent category on a real security
+    # alert — was found live). It confidently catches "new sign-in" via score_categories and
+    # overrides the LLM's made-up "Security Alerts"/"Placements" guesses on BOTH emails, not
+    # just the second one via sender precedent as before this fix.
+    assert first["category"] == "Account Security"
+    assert second["category"] == "Account Security"
 
 
 # --- Re-scanning attachments after identifiers change ------------------------------------
