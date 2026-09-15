@@ -1,71 +1,50 @@
-# Connecting ClickUp & Slack
+# Connecting Gmail, Google Calendar, and Slack
 
-Everything runs **dry-run (no network) until you add tokens**. Copy `.env.example` → `.env`
-(git-ignored) and fill in what you have. The code reads those values automatically.
+The detailed, step-by-step version of all three — including the one-time Google Cloud OAuth
+client setup — lives in `SETUP.md` (§6 "First login and connecting Gmail" for Gmail/Calendar).
+This file is the short summary.
 
 > ⚠️ Never commit `.env` or paste tokens into chat. `.env` is git-ignored on purpose.
 
----
+## 1. Gmail and Google Calendar (OAuth, per-user)
 
-## 1. ClickUp  (push + pull)
+Both go through the same redirect-based consent flow (`brain/oauth_flow.py`): open the
+Integrations page → **Connect** → approve in your own browser → the app polls and flips to
+"Connected." No tokens ever go in `.env` for these — each user's grant is stored server-side,
+keyed to their account.
 
-### Get the credentials
-- **API token** — ClickUp → avatar (bottom-left) → *Settings* → *Apps* → *API Token* → **Generate** → copy `pk_...`.
-- **List ID** — open the List you want → *right-click its name → Copy link* (or read it from the URL `.../v/li/<LIST_ID>`).
+One-time setup, done once per deployment (not per user): register an OAuth client in Google
+Cloud Console and save its credentials JSON where `GMAIL_CREDENTIALS_PATH` points. Full steps
+in `SETUP.md` §6.
 
-### `.env`
-```
-CLICKUP_TOKEN=pk_xxxxxxxx
-CLICKUP_LIST_ID=901234567
-```
+**Expect to reconnect about weekly** — this app requests a restricted Gmail scope
+(`https://mail.google.com/`) on an unverified OAuth client, so Google expires refresh tokens
+after 7 days. That's routine, not a bug; the UI offers **Connect** again when it happens.
 
-### Use it
-- **Push** (brain action-items → ClickUp tasks):
-  - dry-run (safe default): `uv run python -m brain.act`
-  - live: `uv run python -m brain.act --push`
-- **Pull** (ClickUp tasks → brain nodes): `uv run python -m brain.ingest clickup`
-  - Idempotent: a task is keyed on its ClickUp id, so re-pulling **updates**, never duplicates. Push-then-pull reconciles the same task.
+## 2. Slack (message ingestion)
 
----
+Slack messages flow into the *same* knowledge tree as mail — same categories, same topics, and
+a Slack message about the same subject as an email can merge into one thread
+(`brain/slack_ingest.py` feeds the same channel-agnostic pipeline as Gmail).
 
-## 2. Slack
-
-Two capabilities — set up whichever you want (or both).
-
-### A. Notifications (outbound) — the brain posts to a channel
-1. Create an app: https://api.slack.com/apps → *Create New App* → *From scratch* → name it, pick your workspace.
-2. *OAuth & Permissions* → *Bot Token Scopes* → add **`chat:write`**.
+1. Create an app at https://api.slack.com/apps → *From scratch*.
+2. *OAuth & Permissions* → *Bot Token Scopes* → add **`channels:history`**.
 3. *Install to Workspace* → copy the **Bot User OAuth Token** (`xoxb-...`).
-4. In Slack, invite the bot to the channel: `/invite @YourApp`.
-5. Channel id: click the channel name → the ID (`C0...`) is at the bottom of the popup.
+4. Invite the bot to the channel you want ingested: `/invite @YourApp`.
+5. Get the channel id (click the channel name → id is at the bottom of the popup).
 
 ```
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_CHANNEL=C0XXXXXXX
 ```
 
-Smoke test: `uv run python -c "from slack.client import SlackClient; print(SlackClient().post('brain online'))"`
-(no token → prints a dry-run line; with a token → actually posts).
-
-Fires automatically on: **a candidate added** (GUI or CLI) and **tasks pushed to ClickUp**.
-
-### B. Interactive `/brain` — ask the brain from Slack
-Needs the bot token above **plus** an app-level token (Socket Mode — no public URL required).
-1. Same app → *Socket Mode* → **Enable** → generate an **App-Level Token** with scope `connections:write` → copy `xapp-...`.
-2. *Slash Commands* → *Create New Command* → command `/brain`, any description. (Socket Mode means no Request URL needed.)
-3. *OAuth & Permissions* → add scopes `commands` (and `app_mentions:read` for @-mentions). Reinstall if prompted.
-4. `.env`: `SLACK_APP_TOKEN=xapp-...`
-5. Run the bot (keep it running): `uv run python -m slack.bot`
-6. In Slack: `/brain who is the best fit for backend?` → it replies with the answer **and the sources it used**.
-
----
+**Known gap:** this has been built and unit-tested with a stand-in, but the real Slack API call
+has never executed against a live workspace — see `CURRENT_STATE.md`'s "Known gaps."
 
 ## What I need from you (summary)
 
 | To turn on | You provide |
 |---|---|
-| ClickUp push + pull | `CLICKUP_TOKEN`, `CLICKUP_LIST_ID` |
-| Slack notifications | `SLACK_BOT_TOKEN`, `SLACK_CHANNEL` (+ invite the bot to the channel) |
-| Slack `/brain` bot | also `SLACK_APP_TOKEN` + create the `/brain` slash command |
-
-Drop them into `.env` and tell me — I'll run the live smoke tests with you. Until then it's all built and dry-run-verified.
+| Gmail | nothing in `.env` for the token itself — connect from the Integrations page (needs the one-time OAuth client from `SETUP.md` §6) |
+| Google Calendar | same redirect flow, same OAuth client, a separate **Connect** on the Integrations page |
+| Slack ingestion | `SLACK_BOT_TOKEN`, `SLACK_CHANNEL` (+ invite the bot to the channel) |

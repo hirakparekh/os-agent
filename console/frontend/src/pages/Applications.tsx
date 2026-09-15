@@ -1,4 +1,4 @@
-import { Calendar, Check, CheckSquare, Clock, ExternalLink, FileText, Hash, Mail, Plug, Plus, Shield, WifiOff, Zap } from "lucide-react"
+import { Calendar, Check, Clock, ExternalLink, FileText, Hash, Mail, Plug, Plus, Shield, WifiOff, Zap } from "lucide-react"
 import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 
@@ -101,7 +101,6 @@ const GOOGLE_OAUTH_APPS: Record<
 // Translucent tints rather than solid pastels so the badges read in both light and dark mode.
 const APP_ICON: Record<string, { icon: typeof Plug; className: string }> = {
   gmail: { icon: Mail, className: "bg-red-500/10 text-red-500" },
-  clickup: { icon: CheckSquare, className: "bg-violet-500/10 text-violet-500" },
   slack: { icon: Hash, className: "bg-fuchsia-500/10 text-fuchsia-500" },
   google_calendar: { icon: Calendar, className: "bg-blue-500/10 text-blue-500" },
   notion: { icon: FileText, className: "bg-neutral-500/10 text-neutral-500" },

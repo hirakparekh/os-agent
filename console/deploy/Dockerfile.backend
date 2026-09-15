@@ -1,4 +1,4 @@
-# Ops-console backend image. Build context = repo root (needs clickup/ + console/).
+# Ops-console backend image. Build context = repo root (needs security/ + console/).
 #   docker build -f console/deploy/Dockerfile.backend -t ops-console-backend .
 FROM python:3.11-slim
 
@@ -10,10 +10,8 @@ ENV PYTHONPATH=/app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --no-dev
 
-# Source: the overlay clients + the console backend (not the frontend)
-COPY clickup ./clickup
-COPY tools ./tools
-COPY skills ./skills
+# Source: the console backend + the shared JWT module it imports (security/tokens.py)
+COPY security ./security
 COPY console/__init__.py ./console/__init__.py
 COPY console/backend ./console/backend
 

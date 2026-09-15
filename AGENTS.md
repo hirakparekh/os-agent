@@ -1,7 +1,10 @@
 # Agent OS — contributor & agent guide
 
-Second brain for the company — an overlay on [Hermes Agent](https://github.com/nousresearch/hermes-agent).
-Full design: [`docs/superpowers/specs/2026-06-07-agent-os-poc-design.md`](docs/superpowers/specs/2026-06-07-agent-os-poc-design.md).
+A mail knowledge-tree pipeline: each user connects their own Gmail (optionally Slack, Google
+Calendar); a local service ingests, classifies, and answers questions over the result behind a
+web console and an Android app. See [`CURRENT_STATE.md`](CURRENT_STATE.md) for the accurate,
+current picture and [`SETUP.md`](SETUP.md) to run it. `README.md` covers the same ground for a
+first-time reader.
 
 This file is the single source of truth for **where files go**. Place every new file
 (human- or agent-written) per the layout below. If a needed location isn't listed, add it
@@ -14,22 +17,22 @@ here first rather than placing files ad hoc.
 | `pyproject.toml` | Project metadata, deps, tool config (ruff, mypy, import-linter) |
 | `.python-version`, `uv.lock` | Pinned interpreter and locked deps (managed by `uv`) |
 | `.pre-commit-config.yaml` | Local git-hook chain (the harness) |
-| `.github/workflows/` | CI — runs the identical harness chain (`ci.yml`, job `harness`) |
-| `package.json`, `.markdownlint.jsonc` | Dev-only Node tools + doc-lint config (jscpd, markdownlint) |
-| `tools/` | Custom Hermes tools (e.g. `tools/fathom/`). MUST NOT write to ClickUp directly (ADR-0001) |
-| `clickup/` | Typed ClickUp client. ALL ClickUp API access goes through here (ADR-0001) |
-| `skills/` | Hermes skills (synthesis loop), agentskills.io-compatible |
-| `console/` | Full-stack ops console: `console/backend` (FastAPI) + `console/frontend` (Vite/React/shadcn). Isolated from the overlay; reaches ClickUp only via `clickup/`; core packages MUST NOT import it (ADR-0002) |
-| `scripts/` | Custom harness check scripts (`check_specs.py`, `check_inline_styles.py`) |
-| `tests/` | `pytest` tests (e.g. architecture + spec-presence guards) |
-| `features/` | BDD Gherkin `.feature` files + step defs. Drives the real interface only — never internals/DB |
-| `docs/adr/` | Architecture Decision Records (enforced by `import-linter`) |
+| `.github/workflows/` | CI — runs the identical harness chain |
+| `brain/` | The mail knowledge-tree pipeline: ingest, classification, Q&A, Gmail/Calendar OAuth, the FastAPI app (`viz_server.py`) — see `brain/README.md` |
+| `console/` | Full-stack ops console: `console/backend` (FastAPI: accounts, chat, Slack token) + `console/frontend` (Vite/React/shadcn) — see `console/README.md` |
+| `app/` | Android app (Flutter) — see `app/README.md` |
+| `security/` | Shared JWT signing/verification (`security/tokens.py`), used by both `brain/` and `console/backend` |
+| `slack/` | Slack outbound client |
+| `scripts/` | Utility scripts (e.g. `mail_cron.ps1`) |
+| `tests/` | `pytest` tests |
+| `e2e/` | Playwright end-to-end support fixtures (fake OpenRouter/voice, DB seeding) |
+| `docs/adr/` | Architecture Decision Records |
 | `docs/prd/` | Product requirements (problem · goal · user journey) |
 | `docs/design-system/` | UI rules (visual ADRs); scoped to any web UI |
 | `docs/solutions/` | Documented solutions to past problems (bugs, best practices, workflow patterns), by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas |
 | `docs/superpowers/` | Specs and implementation plans |
-| `docs/team/` | Roster, assignments, kickoff runbook |
-| `deploy/` | docker-compose for the Unraid server |
+| `docs/app/` | Android app decision records |
+| `docs/archive/` | Superseded design docs from an earlier, abandoned pitch — historical only |
 | `.claude/` | Committed team config (`settings.json`); `settings.local.json` is gitignored |
 
 ## Develop

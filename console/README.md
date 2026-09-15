@@ -1,28 +1,26 @@
 # Ops Console (full-stack)
 
-The team-facing web app for Agent OS. **All ops-console code lives in this folder** — it is
-kept separate from the Hermes-overlay packages (`tools/`, `clickup/`, `skills/`) on purpose, so
-contributors can work here without touching the agent runtime. The console *consumes* the
-`clickup/` client; it never modifies it.
+The web app for Agent OS: accounts/login, chat over your mail tree, and the Integrations page
+(Gmail/Calendar/Slack connect, automation rules). Mail ingestion, classification, and Q&A
+themselves live in `brain/` (a separate process) — this console is the UI and account layer in
+front of it. See `../CURRENT_STATE.md` for how the two talk to each other.
 
-> **Status:** scaffolding. Build it task-by-task following
-> [`docs/superpowers/plans/2026-06-16-track-c-ops-console.md`](../docs/superpowers/plans/2026-06-16-track-c-ops-console.md).
-> Boundaries are governed by ADR-0002.
+## What it does
 
-## What it does (v1)
-
-- **Login** — email/password (single admin cred for now; Slack OAuth later).
-- **Integration health** — is ClickUp / Slack / Fathom configured?
-- **Onboarding** — add a person (name, role, Slack handle, the products they work on) → recorded in ClickUp.
-- **Roster** — read-only list of onboarded people.
+- **Login** — email/password, admin-seeded on first startup (`POST /auth/users` to add more).
+- **Chat** — ask natural-language questions over your ingested mail (proxies to `brain`'s
+  `/api/mail/ask`).
+- **Mail / Integrations pages** — connect Gmail, Google Calendar, and Slack; review queue;
+  needs-attention and action-item panels; automation rules; offline-mode toggle.
+- **Analytics** — category volume over your mail tree.
 
 ## Layout
 
 ```
 console/
-├── backend/    # FastAPI (Python). Runs in the repo's uv env. Reaches ClickUp only via the root clickup/ client.
-├── frontend/   # Vite + React + TypeScript SPA. Talks only to backend/ — never a third-party API directly.
-└── deploy/     # Dockerfiles + docker-compose (Unraid) + railway.json (Railway).
+├── backend/    # FastAPI (Python). Accounts, JWT, chat-session storage, the Slack token, voice proxy.
+├── frontend/   # Vite + React + TypeScript SPA. Talks to backend/ AND directly to brain/ for mail routes.
+└── deploy/     # Dockerfile + docker-compose (Unraid) + railway.json (Railway) — backend only for now.
 ```
 
 ## Run locally
@@ -78,8 +76,11 @@ Point the backend at a different database any time by setting `DATABASE_URL`, e.
 The dev frontend (`:5173`) is already an allowed CORS origin; for other origins set
 `OPS_CORS_ORIGINS` (comma-separated) on the backend.
 
-## Boundaries (ADR-0002)
+## Boundaries
 
-- `frontend/` → calls `backend/` only. No ClickUp/Slack/Fathom SDKs or tokens in the browser.
-- `backend/` → reaches ClickUp only through `clickup/client.py` (ADR-0001).
-- Core packages (`clickup/`, `tools/`, `skills/`) MUST NOT import `console/`.
+- `frontend/` → no third-party SDKs or tokens in the browser. It calls `backend/` for
+  accounts/chat/integrations, and `brain/` directly for mail-specific routes (see
+  `console/frontend/src/lib/brainApi.ts`) since those are hosted by the `brain` process, not
+  proxied through `backend/`.
+- `backend/` and `brain/` independently verify the same JWT (`OPS_SECRET_KEY` must match on
+  both) rather than one calling the other — see `../CURRENT_STATE.md`.

@@ -7,8 +7,9 @@ compiled.**
 
 This file is the complete state of the project — what works, what has never run, what is
 deliberately absent, and what to do next. It is long on purpose. Prefer it over
-`README.md`, `system-overview.md`, and `agent-os-clean-room-architecture.md`, which describe an
-original pitch (Fathom → Hermes → ClickUp) that was never built and has since been deleted.
+the now-archived `docs/archive/system-overview.md` and `docs/archive/agent-os-clean-room-architecture.md`,
+which describe an original pitch (Fathom → Hermes → ClickUp) that was never built and has since
+been deleted. `README.md` itself has since been rewritten to match reality.
 
 `CURRENT_STATE.md` is accurate and complementary — it covers the backend in more depth.
 `docs/app/` holds the Android app's decision records with reasoning.

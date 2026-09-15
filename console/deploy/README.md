@@ -1,6 +1,6 @@
 # Deploy — Ops Console
 
-Two targets are kept until we commit to one (Track C decision pending).
+Two deploy targets are kept side by side: Unraid/self-hosted (docker-compose) and Railway.
 
 ## Environment variables (backend)
 
@@ -9,10 +9,12 @@ Two targets are kept until we commit to one (Track C decision pending).
 | `DATABASE_URL` | Postgres connection (e.g. `postgresql+psycopg://ops:ops@db:5432/ops_console`) |
 | `OPS_SECRET_KEY` | JWT signing key — use 32+ random bytes in production |
 | `OPS_ADMIN_EMAIL` / `OPS_ADMIN_PASSWORD` | Seed admin login, created on first startup if absent |
-| `CLICKUP_TOKEN` | ClickUp API token (onboarding writes; health "configured") |
-| `CLICKUP_EMPLOYEES_LIST_ID` | List that onboarded people are written to |
-| `SLACK_BOT_TOKEN` / `FATHOM_API_KEY` | Health "configured" status (not used by v1 logic) |
+| `SLACK_BOT_TOKEN` | Slack app bot token, for Slack message ingestion into the mail tree |
 | `OPS_CORS_ORIGINS` | Comma-separated origins allowed to call the API |
+
+This compose file builds `console/backend` (accounts/login/chat) only — the `brain` service
+(mail ingest, classification, Q&A, OAuth; see the root `SETUP.md`) is a separate process and
+isn't part of this stack yet.
 
 The compose stack runs Postgres (`db` service, volume `ops_db`); the backend waits for it to be
 healthy and creates tables + seeds the admin on startup. Add more logins via

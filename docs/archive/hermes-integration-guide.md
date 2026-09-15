@@ -1,3 +1,8 @@
+> **Archived — describes deploying an earlier, abandoned pitch** (résumé/meeting extractors +
+> a ClickUp create step) onto a teammate's Hermes box. None of that exists any more; see
+> [`../../CURRENT_STATE.md`](../../CURRENT_STATE.md) for what's actually here today. Kept for
+> historical reference only.
+
 # Deploying the Agent OS brain into Hermes
 
 How to put what we've built so far — the two extractors and the resolver — onto a Hermes box and

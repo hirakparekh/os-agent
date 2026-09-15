@@ -1,10 +1,11 @@
 # Agent OS — Current State (2026-09-11)
 
-> **Why this file exists:** `README.md`, `system-overview.md`, and
-> `agent-os-clean-room-architecture.md` describe the *original* pitch (a Fathom → Hermes →
-> ClickUp co-pilot loop, résumé parsing, staff onboarding). None of that exists any more — it
-> was removed once it became clear nothing in the app could reach it. This file describes what
-> is actually here today. Treat the others as historical.
+> **Why this file exists:** `docs/archive/system-overview.md` and
+> `docs/archive/agent-os-clean-room-architecture.md` describe the *original* pitch (a Fathom →
+> Hermes → ClickUp co-pilot loop, résumé parsing, staff onboarding). None of that exists any
+> more — it was removed once it became clear nothing in the app could reach it, and both docs
+> have been moved to `docs/archive/` for that reason. This file describes what is actually here
+> today; `README.md` has been rewritten to match it.
 
 ---
 

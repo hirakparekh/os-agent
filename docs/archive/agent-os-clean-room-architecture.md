@@ -1,3 +1,8 @@
+> **Archived — describes an earlier, abandoned pitch** (a Fathom → Hermes → ClickUp meeting
+> co-pilot). None of it was built; the project became the mail knowledge-tree pipeline instead.
+> See [`../../CURRENT_STATE.md`](../../CURRENT_STATE.md) for what's actually here today. Kept
+> for historical reference only.
+
 # Agent OS — Clean-Room Architecture Analysis
 
 > **Status:** Design exploration / decision record (clean-room).

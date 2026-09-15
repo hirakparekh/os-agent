@@ -113,9 +113,9 @@ OPS_ADMIN_EMAIL=admin@agent-os.local
 OPS_ADMIN_PASSWORD=changeme
 ```
 
-Everything else in `.env.example` (ClickUp, Slack, legacy IMAP app-password vars) is optional —
-leave as placeholders unless you're specifically using those integrations. Gmail is connected
-per-user from inside the console UI (§5), not via `.env`.
+Everything else in `.env.example` (Slack, legacy IMAP app-password vars) is optional — leave as
+placeholders unless you're specifically using those integrations. Gmail is connected per-user
+from inside the console UI (§5), not via `.env`.
 
 **Verify:** `uv run python -c "import os; from dotenv import load_dotenv; load_dotenv(); assert os.environ['OPENROUTER_API_KEYS']; assert os.environ['OPS_SECRET_KEY']"` exits with no error.
 
@@ -231,10 +231,7 @@ two things that would otherwise leave the machine: OpenRouter (a local stub via
 directly). It uses a throwaway SQLite DB under `e2e/.tmp/` — no Postgres, no real credentials,
 and it never touches your real `brain/data/users/` mail.
 
-**Expected result:** all Python tests pass except one known pre-existing, unrelated failure —
-`test_onboarding_creates_clickup_task_and_appears_in_roster` (a ClickUp-integration test broken
-independently of this setup; confirmed present on a clean checkout). Anything else failing is a
-real problem with your setup.
+**Expected result:** all Python tests pass. Anything failing is a real problem with your setup.
 
 ## 9. Troubleshooting
 
