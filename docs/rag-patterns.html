@@ -1,0 +1,579 @@
+<title>Guardrailed Tree RAG</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#EEF1F3;
+    --surface:#FFFFFF;
+    --ink:#17222C;
+    --muted:#5B6B78;
+    --line:#C7D0D6;
+    --accent:#B8611E;
+    --accent-soft:#D9A15F;
+    --accent-wash:#B8611E14;
+    --det-wash:#5B6B7812;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#10161B;
+      --surface:#16202A;
+      --ink:#E7EDF2;
+      --muted:#8CA0AE;
+      --line:#2B3A46;
+      --accent:#E08A3E;
+      --accent-soft:#C77B45;
+      --accent-wash:#E08A3E1F;
+      --det-wash:#8CA0AE14;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#10161B;
+    --surface:#16202A;
+    --ink:#E7EDF2;
+    --muted:#8CA0AE;
+    --line:#2B3A46;
+    --accent:#E08A3E;
+    --accent-soft:#C77B45;
+    --accent-wash:#E08A3E1F;
+    --det-wash:#8CA0AE14;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    margin:0;
+    padding:0;
+  }
+  .page{
+    max-width:1180px;
+    margin:0 auto;
+    padding:56px 32px 88px;
+    display:flex;
+    flex-direction:column;
+    gap:48px;
+  }
+  header{
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+    max-width:640px;
+  }
+  .eyebrow{
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:12px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--accent);
+    font-weight:600;
+  }
+  h1{
+    font-size:34px;
+    font-weight:700;
+    line-height:1.15;
+    margin:0;
+    text-wrap:balance;
+  }
+  header p{
+    font-size:16px;
+    line-height:1.6;
+    color:var(--muted);
+    margin:0;
+    max-width:62ch;
+  }
+
+  section{
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+  }
+  h2{
+    font-size:20px;
+    font-weight:600;
+    margin:0;
+    display:flex;
+    align-items:baseline;
+    gap:10px;
+  }
+  h2 .num{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:13px;
+    color:var(--muted);
+    font-weight:500;
+  }
+  .dek{
+    font-size:14.5px;
+    color:var(--muted);
+    line-height:1.55;
+    margin:0;
+    max-width:70ch;
+  }
+
+  /* legend */
+  .legend{
+    display:flex;
+    flex-wrap:wrap;
+    gap:22px;
+    padding:16px 20px;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:10px;
+  }
+  .legend-item{
+    display:flex;
+    align-items:center;
+    gap:9px;
+    font-size:13px;
+    color:var(--ink);
+  }
+  .swatch{
+    width:26px;
+    height:16px;
+    border-radius:4px;
+    flex:none;
+  }
+  .swatch.llm{ background:var(--accent-wash); border:1.6px solid var(--accent); }
+  .swatch.llm-soft{ background:var(--accent-wash); border:1.6px dashed var(--accent-soft); }
+  .swatch.det{ background:var(--det-wash); border:1.6px dashed var(--muted); }
+  .swatch.plain{ background:var(--surface); border:1.4px solid var(--ink); }
+  .swatch.store{ background:var(--det-wash); border:2px solid var(--ink); }
+
+  figure{ margin:0; display:flex; flex-direction:column; gap:10px; }
+  .diagram-scroll{
+    overflow-x:auto;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:8px;
+  }
+  svg.diagram{ display:block; width:100%; height:auto; min-width:760px; }
+  figcaption{
+    font-size:13.5px;
+    color:var(--muted);
+    line-height:1.5;
+    max-width:72ch;
+  }
+
+  /* svg node classes */
+  .node-rect{ rx:10; }
+  .plain .node-rect{ fill:var(--surface); stroke:var(--ink); stroke-width:1.4; }
+  .det .node-rect{ fill:var(--det-wash); stroke:var(--muted); stroke-width:1.4; stroke-dasharray:5 4; }
+  .llm .node-rect{ fill:var(--accent-wash); stroke:var(--accent); stroke-width:1.8; }
+  .llm-soft .node-rect{ fill:var(--accent-wash); stroke:var(--accent-soft); stroke-width:1.6; stroke-dasharray:3 3; }
+  .store .node-rect{ fill:var(--det-wash); stroke:var(--ink); stroke-width:2.2; }
+
+  .node-label{
+    font-family:"IBM Plex Sans", sans-serif;
+    font-size:13.5px;
+    font-weight:600;
+    fill:var(--ink);
+    text-anchor:middle;
+  }
+  .node-sub{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:10px;
+    fill:var(--muted);
+    text-anchor:middle;
+  }
+  .llm .node-sub{ fill:var(--accent); }
+  .edge{ stroke:var(--ink); stroke-width:1.4; fill:none; }
+  .arrowhead{ fill:var(--ink); }
+  .edge-label{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:10.5px;
+    fill:var(--muted);
+    text-anchor:middle;
+  }
+  .row-tag{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:10.5px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    fill:var(--muted);
+  }
+
+  /* comparison table */
+  .table-wrap{ overflow-x:auto; }
+  table{
+    width:100%;
+    border-collapse:collapse;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:12px;
+    overflow:hidden;
+    font-size:13.5px;
+  }
+  thead th{
+    text-align:left;
+    font-family:"IBM Plex Mono", monospace;
+    font-size:11px;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    color:var(--muted);
+    font-weight:600;
+    padding:12px 16px;
+    border-bottom:1px solid var(--line);
+    white-space:nowrap;
+  }
+  tbody td{
+    padding:14px 16px;
+    border-bottom:1px solid var(--line);
+    vertical-align:top;
+    line-height:1.5;
+  }
+  tbody tr:last-child td{ border-bottom:none; }
+  tbody tr.ours{ background:var(--accent-wash); }
+  td.pattern{ font-weight:600; white-space:nowrap; }
+  td .num{
+    font-family:"IBM Plex Mono", monospace;
+    font-variant-numeric:tabular-nums;
+    color:var(--ink);
+  }
+  td.muted-cell{ color:var(--muted); }
+
+  footer{
+    font-size:12.5px;
+    color:var(--muted);
+    border-top:1px solid var(--line);
+    padding-top:20px;
+  }
+</style>
+
+<div class="page">
+
+  <header>
+    <div class="eyebrow">Retrieval-augmented generation — architecture patterns</div>
+    <h1>Three ways to ground an LLM in your own data</h1>
+    <p>Vector RAG, GraphRAG, and a hierarchical alternative — guardrailed tree RAG — side by side, drawn as the mechanism each one actually runs, not just the name.</p>
+  </header>
+
+  <section aria-label="Legend">
+    <div class="legend">
+      <div class="legend-item"><span class="swatch plain"></span> raw input</div>
+      <div class="legend-item"><span class="swatch det"></span> deterministic step — no LLM call</div>
+      <div class="legend-item"><span class="swatch llm-soft"></span> LLM call — embedding (cheap)</div>
+      <div class="legend-item"><span class="swatch llm"></span> LLM call — generation (expensive)</div>
+      <div class="legend-item"><span class="swatch store"></span> persisted structure</div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">01</span> Vector RAG</h2>
+    <p class="dek">Every document is chunked and embedded once at index time. At query time the question is embedded too, matched against the flat index by similarity, and the top-k chunks are handed to the LLM to answer from.</p>
+    <figure>
+      <div class="diagram-scroll">
+        <svg class="diagram" viewBox="0 0 1300 300" role="img" aria-label="Vector RAG: documents are chunked and embedded into a flat vector store at index time; at query time the question is embedded, matched against the store, and the retrieved chunks are passed to an LLM to generate the answer.">
+          <defs>
+            <marker id="arrow-vec" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" class="arrowhead"/>
+            </marker>
+          </defs>
+          <text x="40" y="24" class="row-tag">index time</text>
+          <text x="40" y="196" class="row-tag">query time</text>
+
+          <!-- ingest row y=60 -->
+          <g class="plain">
+            <rect class="node-rect" x="40" y="36" width="140" height="48"/>
+            <text class="node-label" x="110" y="56">Document</text>
+            <text class="node-sub" x="110" y="72">raw input</text>
+          </g>
+          <line class="edge" x1="180" y1="60" x2="216" y2="60" marker-end="url(#arrow-vec)"/>
+          <g class="det">
+            <rect class="node-rect" x="220" y="36" width="140" height="48"/>
+            <text class="node-label" x="290" y="56">Chunk</text>
+            <text class="node-sub" x="290" y="72">split text</text>
+          </g>
+          <line class="edge" x1="360" y1="60" x2="396" y2="60" marker-end="url(#arrow-vec)"/>
+          <g class="llm-soft">
+            <rect class="node-rect" x="400" y="36" width="140" height="48"/>
+            <text class="node-label" x="470" y="56">Embed</text>
+            <text class="node-sub" x="470" y="72">embedding call</text>
+          </g>
+          <line class="edge" x1="540" y1="60" x2="596" y2="60" marker-end="url(#arrow-vec)"/>
+          <text class="edge-label" x="568" y="50">index</text>
+
+          <!-- store, spans both rows -->
+          <g class="store">
+            <rect class="node-rect" x="600" y="20" width="160" height="260"/>
+            <text class="node-label" x="680" y="140">Vector</text>
+            <text class="node-label" x="680" y="158">Store</text>
+            <text class="node-sub" x="680" y="176">flat index</text>
+          </g>
+
+          <!-- query row y=230 -->
+          <g class="plain">
+            <rect class="node-rect" x="40" y="206" width="140" height="48"/>
+            <text class="node-label" x="110" y="226">Question</text>
+            <text class="node-sub" x="110" y="242">user input</text>
+          </g>
+          <line class="edge" x1="180" y1="230" x2="216" y2="230" marker-end="url(#arrow-vec)"/>
+          <g class="llm-soft">
+            <rect class="node-rect" x="220" y="206" width="140" height="48"/>
+            <text class="node-label" x="290" y="226">Embed query</text>
+            <text class="node-sub" x="290" y="242">embedding call</text>
+          </g>
+          <line class="edge" x1="360" y1="230" x2="596" y2="230" marker-end="url(#arrow-vec)"/>
+          <text class="edge-label" x="478" y="220">search</text>
+
+          <line class="edge" x1="760" y1="230" x2="796" y2="230" marker-end="url(#arrow-vec)"/>
+          <text class="edge-label" x="778" y="220">top-k</text>
+          <g class="det">
+            <rect class="node-rect" x="800" y="206" width="150" height="48"/>
+            <text class="node-label" x="875" y="226">Retrieved</text>
+            <text class="node-sub" x="875" y="242">context chunks</text>
+          </g>
+          <line class="edge" x1="950" y1="230" x2="986" y2="230" marker-end="url(#arrow-vec)"/>
+          <g class="llm">
+            <rect class="node-rect" x="990" y="206" width="150" height="48"/>
+            <text class="node-label" x="1065" y="226">Generate</text>
+            <text class="node-sub" x="1065" y="242">generation call</text>
+          </g>
+          <line class="edge" x1="1140" y1="230" x2="1176" y2="230" marker-end="url(#arrow-vec)"/>
+          <g class="plain">
+            <rect class="node-rect" x="1180" y="206" width="100" height="48"/>
+            <text class="node-label" x="1230" y="230">Answer</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>Fig. 1 — one cheap embedding call per document at index time; two calls per question (embed + generate) at query time. The index itself carries no semantic labels, only geometry.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2><span class="num">02</span> GraphRAG</h2>
+    <p class="dek">Documents are mined for entities and relationships, clustered into communities, and each community is summarized by the LLM. Answering forks in two: a local search walks the entity subgraph for specific questions; a global search maps over every community summary for broad, thematic ones.</p>
+    <figure>
+      <div class="diagram-scroll">
+        <svg class="diagram" viewBox="0 0 1300 400" role="img" aria-label="GraphRAG: documents are chunked and an LLM extracts entities and relations into a graph; a clustering algorithm groups it into communities, and an LLM summarizes each community. At query time, local search walks the entity subgraph and asks the LLM once, while global search maps the LLM over every community summary and reduces the results — both converging on one answer.">
+          <defs>
+            <marker id="arrow-graph" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" class="arrowhead"/>
+            </marker>
+          </defs>
+          <text x="40" y="24" class="row-tag">index time</text>
+          <text x="40" y="120" class="row-tag">query time</text>
+
+          <!-- ingest row y=60 -->
+          <g class="plain">
+            <rect class="node-rect" x="40" y="36" width="120" height="48"/>
+            <text class="node-label" x="100" y="56">Document</text>
+            <text class="node-sub" x="100" y="72">raw input</text>
+          </g>
+          <line class="edge" x1="160" y1="60" x2="186" y2="60" marker-end="url(#arrow-graph)"/>
+          <g class="det">
+            <rect class="node-rect" x="190" y="36" width="120" height="48"/>
+            <text class="node-label" x="250" y="56">Chunk</text>
+            <text class="node-sub" x="250" y="72">split text</text>
+          </g>
+          <line class="edge" x1="310" y1="60" x2="336" y2="60" marker-end="url(#arrow-graph)"/>
+          <g class="llm">
+            <rect class="node-rect" x="340" y="36" width="170" height="48"/>
+            <text class="node-label" x="425" y="56">Extract</text>
+            <text class="node-sub" x="425" y="72">LLM · per chunk</text>
+          </g>
+          <line class="edge" x1="510" y1="60" x2="546" y2="60" marker-end="url(#arrow-graph)"/>
+          <g class="store">
+            <rect class="node-rect" x="550" y="20" width="140" height="90"/>
+            <text class="node-label" x="620" y="60">Entity Graph</text>
+            <text class="node-sub" x="620" y="78">persisted</text>
+          </g>
+          <line class="edge" x1="690" y1="60" x2="726" y2="60" marker-end="url(#arrow-graph)"/>
+          <g class="det">
+            <rect class="node-rect" x="730" y="36" width="150" height="48"/>
+            <text class="node-label" x="805" y="56">Cluster</text>
+            <text class="node-sub" x="805" y="72">community detect</text>
+          </g>
+          <line class="edge" x1="880" y1="60" x2="916" y2="60" marker-end="url(#arrow-graph)"/>
+          <g class="llm">
+            <rect class="node-rect" x="920" y="36" width="170" height="48"/>
+            <text class="node-label" x="1005" y="56">Summarize</text>
+            <text class="node-sub" x="1005" y="72">LLM · per community</text>
+          </g>
+          <line class="edge" x1="1090" y1="60" x2="1126" y2="60" marker-end="url(#arrow-graph)"/>
+          <g class="store">
+            <rect class="node-rect" x="1130" y="20" width="150" height="90"/>
+            <text class="node-label" x="1205" y="55">Community</text>
+            <text class="node-label" x="1205" y="72">Summaries</text>
+            <text class="node-sub" x="1205" y="90">persisted</text>
+          </g>
+
+          <!-- query -->
+          <g class="plain">
+            <rect class="node-rect" x="40" y="196" width="120" height="48"/>
+            <text class="node-label" x="100" y="216">Question</text>
+            <text class="node-sub" x="100" y="232">user input</text>
+          </g>
+
+          <!-- local branch y=150 (top 150,196) -->
+          <polyline class="edge" points="160,220 190,220 190,174 216,174" marker-end="url(#arrow-graph)"/>
+          <text class="edge-label" x="150" y="166">local</text>
+          <g class="det">
+            <rect class="node-rect" x="220" y="150" width="190" height="48"/>
+            <text class="node-label" x="315" y="170">Local search</text>
+            <text class="node-sub" x="315" y="186">entity subgraph</text>
+          </g>
+          <line class="edge" x1="410" y1="174" x2="446" y2="174" marker-end="url(#arrow-graph)"/>
+          <g class="llm">
+            <rect class="node-rect" x="450" y="150" width="150" height="48"/>
+            <text class="node-label" x="525" y="170">Answer LLM</text>
+            <text class="node-sub" x="525" y="186">generation call</text>
+          </g>
+          <polyline class="edge" points="600,174 660,174 660,212 716,212" marker-end="url(#arrow-graph)"/>
+
+          <!-- global branch y=290 -->
+          <polyline class="edge" points="160,220 190,220 190,314 216,314" marker-end="url(#arrow-graph)"/>
+          <text class="edge-label" x="150" y="308">global</text>
+          <g class="llm">
+            <rect class="node-rect" x="220" y="290" width="220" height="48"/>
+            <text class="node-label" x="330" y="310">Global map ×N</text>
+            <text class="node-sub" x="330" y="326">LLM · per community</text>
+          </g>
+          <line class="edge" x1="440" y1="314" x2="476" y2="314" marker-end="url(#arrow-graph)"/>
+          <g class="llm">
+            <rect class="node-rect" x="480" y="290" width="150" height="48"/>
+            <text class="node-label" x="555" y="310">Reduce</text>
+            <text class="node-sub" x="555" y="326">LLM · combine</text>
+          </g>
+          <polyline class="edge" points="630,314 680,314 680,228 716,228" marker-end="url(#arrow-graph)"/>
+
+          <g class="plain">
+            <rect class="node-rect" x="720" y="196" width="120" height="48"/>
+            <text class="node-label" x="780" y="220">Answer</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>Fig. 2 — indexing runs an LLM call per chunk and per community before any question is asked. Local search answers in one generation call; global search fans an LLM call out across every community (×N) then reduces — the map-reduce that lets it surface themes no single document states outright.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2><span class="num">03</span> Guardrailed Tree RAG <span style="color:var(--accent); font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:600;">— this system</span></h2>
+    <p class="dek">Each item is classified into a fixed category/topic hierarchy by the LLM, then checked by a deterministic keyword scorer that can overrule a wrong guess before anything is written. A question is answered by walking straight to the matching branch — no similarity search, no clustering, one generation call.</p>
+    <figure>
+      <div class="diagram-scroll">
+        <svg class="diagram" viewBox="0 0 1400 300" role="img" aria-label="Guardrailed tree RAG: an item is classified by an LLM, checked by a deterministic keyword guardrail that can overrule the classification, then merged into a fixed category-topic-node tree by a second LLM call. At query time, a deterministic tree lookup finds the relevant nodes directly and a single LLM call generates the answer.">
+          <defs>
+            <marker id="arrow-tree" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" class="arrowhead"/>
+            </marker>
+          </defs>
+          <text x="40" y="24" class="row-tag">index time</text>
+          <text x="40" y="196" class="row-tag">query time</text>
+
+          <!-- ingest row y=60 -->
+          <g class="plain">
+            <rect class="node-rect" x="40" y="36" width="120" height="48"/>
+            <text class="node-label" x="100" y="56">Item</text>
+            <text class="node-sub" x="100" y="72">raw input</text>
+          </g>
+          <line class="edge" x1="160" y1="60" x2="186" y2="60" marker-end="url(#arrow-tree)"/>
+          <g class="llm">
+            <rect class="node-rect" x="190" y="36" width="150" height="48"/>
+            <text class="node-label" x="265" y="56">Classify</text>
+            <text class="node-sub" x="265" y="72">LLM · category+topic</text>
+          </g>
+          <line class="edge" x1="340" y1="60" x2="366" y2="60" marker-end="url(#arrow-tree)"/>
+          <g class="det">
+            <rect class="node-rect" x="370" y="36" width="180" height="48"/>
+            <text class="node-label" x="460" y="56">Guardrail check</text>
+            <text class="node-sub" x="460" y="72">keyword score, can overrule</text>
+          </g>
+          <line class="edge" x1="550" y1="60" x2="576" y2="60" marker-end="url(#arrow-tree)"/>
+          <g class="llm">
+            <rect class="node-rect" x="580" y="36" width="150" height="48"/>
+            <text class="node-label" x="655" y="56">Merge / create</text>
+            <text class="node-sub" x="655" y="72">LLM · thread decision</text>
+          </g>
+          <line class="edge" x1="730" y1="60" x2="756" y2="60" marker-end="url(#arrow-tree)"/>
+          <text class="edge-label" x="843" y="50">write</text>
+
+          <!-- store spans both rows -->
+          <g class="store">
+            <rect class="node-rect" x="760" y="20" width="180" height="260"/>
+            <text class="node-label" x="850" y="140">Category →</text>
+            <text class="node-label" x="850" y="158">Topic → Node</text>
+            <text class="node-sub" x="850" y="176">fixed-depth tree</text>
+          </g>
+
+          <!-- query row y=230 -->
+          <g class="plain">
+            <rect class="node-rect" x="40" y="206" width="120" height="48"/>
+            <text class="node-label" x="100" y="226">Question</text>
+            <text class="node-sub" x="100" y="242">user input</text>
+          </g>
+          <line class="edge" x1="160" y1="230" x2="186" y2="230" marker-end="url(#arrow-tree)"/>
+          <g class="det">
+            <rect class="node-rect" x="190" y="206" width="180" height="48"/>
+            <text class="node-label" x="280" y="226">Tree lookup</text>
+            <text class="node-sub" x="280" y="242">deterministic traverse</text>
+          </g>
+          <line class="edge" x1="370" y1="230" x2="756" y2="230" marker-end="url(#arrow-tree)"/>
+          <text class="edge-label" x="563" y="220">traverse</text>
+
+          <line class="edge" x1="940" y1="230" x2="976" y2="230" marker-end="url(#arrow-tree)"/>
+          <g class="det">
+            <rect class="node-rect" x="980" y="206" width="150" height="48"/>
+            <text class="node-label" x="1055" y="226">Matched nodes</text>
+            <text class="node-sub" x="1055" y="242">direct hit</text>
+          </g>
+          <line class="edge" x1="1130" y1="230" x2="1166" y2="230" marker-end="url(#arrow-tree)"/>
+          <g class="llm">
+            <rect class="node-rect" x="1170" y="206" width="150" height="48"/>
+            <text class="node-label" x="1245" y="226">Generate</text>
+            <text class="node-sub" x="1245" y="242">generation call</text>
+          </g>
+          <line class="edge" x1="1320" y1="230" x2="1356" y2="230" marker-end="url(#arrow-tree)"/>
+          <g class="plain">
+            <rect class="node-rect" x="1360" y="206" width="30" height="48"/>
+          </g>
+          <text class="node-label" x="1305" y="272" style="text-anchor:end; font-size:12px;">Answer →</text>
+        </svg>
+      </div>
+      <figcaption>Fig. 3 — two generation calls per item, both accountable to a deterministic check in between. No clustering pass, no map-reduce: one question costs exactly one generation call, because the tree already encodes where the answer lives.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Side by side</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Pattern</th>
+            <th>Structure</th>
+            <th>Calls to index one item</th>
+            <th>Calls per question</th>
+            <th>Where it wins</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="pattern">Vector RAG</td>
+            <td class="muted-cell">flat similarity index</td>
+            <td><span class="num">1</span> embedding</td>
+            <td><span class="num">2</span> (embed + generate)</td>
+            <td class="muted-cell">broad semantic search, no schema needed</td>
+          </tr>
+          <tr>
+            <td class="pattern">GraphRAG</td>
+            <td class="muted-cell">entity graph + community clusters</td>
+            <td><span class="num">2+</span> per chunk/community</td>
+            <td><span class="num">1</span> local, <span class="num">N+1</span> global</td>
+            <td class="muted-cell">surfacing themes no single doc states</td>
+          </tr>
+          <tr class="ours">
+            <td class="pattern">Guardrailed Tree RAG</td>
+            <td class="muted-cell">fixed category → topic → node tree</td>
+            <td><span class="num">2</span> + 1 deterministic check</td>
+            <td><span class="num">1</span></td>
+            <td class="muted-cell">a bounded, known domain where explainability matters</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>Generic architecture patterns, drawn independent of any one implementation.</footer>
+
+</div>

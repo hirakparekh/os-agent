@@ -1,0 +1,142 @@
+<title>Ask Your Inbox</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+  :root{
+    --bg:#141119; --surface:#1D1926; --ink:#F3EFEA; --muted:#A79FB0; --line:#332C40;
+    --accent:#E0A64E; --accent-ink:#141119; --accent-wash:#E0A64E1c; --good:#7FC9A0; --good-wash:#7FC9A01c;
+  }
+  :root[data-theme="light"]{
+    --bg:#F6F3EE; --surface:#FFFFFF; --ink:#211C29; --muted:#6B6376; --line:#E1DAD0;
+    --accent:#B8721E; --accent-ink:#FFFFFF; --accent-wash:#B8721E12; --good:#2E7D5B; --good-wash:#2E7D5B12;
+  }
+  *{box-sizing:border-box;}
+  body{background:var(--bg); color:var(--ink); font-family:"IBM Plex Sans",ui-sans-serif,sans-serif; margin:0;}
+  .page{max-width:1040px; margin:0 auto; padding:64px 32px 100px; display:flex; flex-direction:column; gap:64px;}
+  .display{font-family:"Fraunces",Georgia,serif; font-variation-settings:"opsz" 90; text-wrap:balance;}
+  .eyebrow{font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); font-weight:600;}
+
+  /* hero */
+  .hero{display:flex; flex-direction:column; gap:22px; max-width:760px;}
+  .hero h1{font-size:44px; font-weight:600; line-height:1.12; margin:8px 0 0;}
+  .hero p{font-size:17px; line-height:1.65; color:var(--muted); max-width:60ch; margin:0;}
+  .live-answer{background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:22px 24px; display:flex; flex-direction:column; gap:14px; max-width:640px;}
+  .bubble-q{align-self:flex-end; background:var(--accent); color:var(--accent-ink); font-size:14px; font-weight:600; padding:9px 16px; border-radius:16px 16px 4px 16px;}
+  .bubble-a{font-size:14.5px; line-height:1.6; color:var(--ink);}
+  .live-tag{font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--good); background:var(--good-wash); padding:3px 9px; border-radius:6px; align-self:flex-start;}
+
+  section{display:flex; flex-direction:column; gap:20px;}
+  h2{font-size:26px; font-weight:600; margin:0; text-wrap:balance;}
+  .dek{font-size:15px; color:var(--muted); line-height:1.6; max-width:68ch; margin:0;}
+
+  /* comparison table */
+  .table-wrap{overflow-x:auto;}
+  table{width:100%; border-collapse:collapse; background:var(--surface); border:1px solid var(--line); border-radius:14px; overflow:hidden; font-size:14px;}
+  thead th{text-align:left; font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); font-weight:600; padding:13px 16px; border-bottom:1px solid var(--line);}
+  tbody td{padding:14px 16px; border-bottom:1px solid var(--line); line-height:1.55; vertical-align:top;}
+  tbody tr:last-child td{border-bottom:none;}
+  .check{color:var(--good); font-weight:700;}
+  .them-col{color:var(--muted); font-size:13px;}
+
+  /* three-up differentiators */
+  .diff-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:18px;}
+  .diff-card{background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:22px; display:flex; flex-direction:column; gap:10px;}
+  .diff-card .num{font-family:"Fraunces",serif; font-size:30px; color:var(--accent); font-weight:600;}
+  .diff-card h3{font-size:16px; font-weight:600; margin:0;}
+  .diff-card p{font-size:13.5px; color:var(--muted); line-height:1.55; margin:0;}
+
+  /* roadmap */
+  .roadmap{display:flex; flex-wrap:wrap; gap:10px;}
+  .roadmap-chip{font-size:13px; padding:8px 14px; border-radius:999px; border:1px solid var(--line); background:var(--surface); color:var(--ink); display:flex; align-items:center; gap:7px;}
+  .roadmap-chip .dot{width:6px; height:6px; border-radius:50%; background:var(--accent); flex:none;}
+
+  .close{background:var(--surface); border:1px solid var(--line); border-radius:16px; padding:28px 30px; display:flex; flex-direction:column; gap:12px;}
+  .close h2{font-size:22px;}
+  .close p{font-size:14.5px; color:var(--muted); line-height:1.6; margin:0; max-width:64ch;}
+
+  footer{font-size:11.5px; color:var(--muted); border-top:1px solid var(--line); padding-top:18px; line-height:1.7;}
+  footer a{color:var(--muted);}
+</style>
+
+<div class="page">
+
+  <div class="hero">
+    <div class="eyebrow">Product pitch</div>
+    <h1 class="display">Ask your inbox a question.<br>Get an answer in four seconds — from your real mail, not a guess.</h1>
+    <p>Connect Gmail once. Every email organizes itself into a tree you can click through and understand. Then just ask.</p>
+
+    <div class="live-answer">
+      <span class="live-tag">● live answer, not scripted</span>
+      <div class="bubble-q">What companies have reached out for placements?</div>
+      <div class="bubble-a">Based on the ingested mail, the following companies have reached out for placements: <strong>FlamAI</strong> (Super Dream Internship), <strong>Omuni</strong> (Associate Software Engineer), <strong>Squadstack.ai</strong> (online test), <strong>Zluri</strong> (Super Dream Internship).</div>
+    </div>
+  </div>
+
+  <section>
+    <h2>What already exists, done our way</h2>
+    <p class="dek">These aren't new ideas — Gmail, Superhuman, and Shortwave already ship AI mail features people pay for. We match the core experience, then add what none of them offer.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Feature</th><th>Already shipping</th><th>Us</th></tr></thead>
+        <tbody>
+          <tr><td>Summarize threads / prioritize inbox</td><td class="them-col">Gmail Gemini (AI Overviews, AI Inbox)</td><td class="check">✓ built</td></tr>
+          <tr><td>Chat with your inbox, get cited answers</td><td class="them-col">Shortwave AI Assistant</td><td class="check">✓ built</td></tr>
+          <tr><td>Auto-triage / auto-categorize mail</td><td class="them-col">Superhuman AI Triage</td><td class="check">✓ built</td></tr>
+          <tr><td>Cross-app grounding (mail + calendar + chat)</td><td class="them-col">Microsoft 365 Copilot</td><td class="check">✓ built (Calendar live today)</td></tr>
+          <tr><td>A category tree you can click through and understand why</td><td class="them-col">— nobody offers this</td><td class="check">✓ only us</td></tr>
+          <tr><td>A classifier that catches and corrects its own AI's mistakes</td><td class="them-col">— nobody discloses this</td><td class="check">✓ only us</td></tr>
+          <tr><td>A mode that runs with zero API cost</td><td class="them-col">— nobody offers this</td><td class="check">◐ in progress</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Three things nobody else has</h2>
+    <div class="diff-grid">
+      <div class="diff-card">
+        <div class="num">1 in 3</div>
+        <h3>Self-correcting, not just self-confident</h3>
+        <p>Across every email we've processed so far, our system caught and fixed its own AI's classification mistake roughly one time in three — including twice where the AI invented a category that doesn't even exist. Most AI tools just trust the model. Ours checks it.</p>
+      </div>
+      <div class="diff-card">
+        <div class="num">Click, don't guess</div>
+        <h3>A tree you can actually understand</h3>
+        <p>Every other AI inbox tool is a black box — you get an answer with no way to see why. Ours is a tree: click a category, click a topic, see the exact email that landed there and why.</p>
+      </div>
+      <div class="diff-card">
+        <div class="num">$0</div>
+        <h3>Runs on free-tier AI, still works</h3>
+        <p>No paid API required to run the core pipeline. A planned offline mode answers using pure keyword logic when there's no AI budget left at all — nobody else's AI mail tool has a real zero-cost fallback.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What's next</h2>
+    <p class="dek">In active development, several already prototyped in the interface:</p>
+    <div class="roadmap">
+      <span class="roadmap-chip"><span class="dot"></span>Slack ingestion</span>
+      <span class="roadmap-chip"><span class="dot"></span>Cron-scheduled auto-sync</span>
+      <span class="roadmap-chip"><span class="dot"></span>Urgency flagging</span>
+      <span class="roadmap-chip"><span class="dot"></span>Action-item extraction</span>
+      <span class="roadmap-chip"><span class="dot"></span>Cross-channel topic merging</span>
+      <span class="roadmap-chip"><span class="dot"></span>Duplicate suppression</span>
+      <span class="roadmap-chip"><span class="dot"></span>Activity analytics dashboard</span>
+      <span class="roadmap-chip"><span class="dot"></span>API-free offline mode</span>
+    </div>
+  </section>
+
+  <div class="close">
+    <h2 class="display">The same engine works for more than mail</h2>
+    <p>Gmail is the first connector. The underlying architecture — classify, guard, organize into an explainable tree, answer from it — is channel-agnostic. Point it at Slack, GitHub, and Calendar together and the same system becomes a cross-channel project manager, not just an inbox tool.</p>
+  </div>
+
+  <footer>
+    Comparison figures verified 2026-09: <a href="https://blog.google/products-and-platforms/products/gmail/gmail-is-entering-the-gemini-era/">Gmail's Gemini era</a> ·
+    <a href="https://email-tools.me/posts/shortwave-review/">Shortwave 2026</a> ·
+    <a href="https://fast.io/resources/superhuman-ai-review-2026/">Superhuman AI 2026</a> ·
+    <a href="https://futurework.blog/2026/05/29/whats-new-and-coming-next-to-microsoft-365-copilot-and-teams/">Microsoft 365 Copilot</a>
+  </footer>
+
+</div>

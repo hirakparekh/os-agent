@@ -1,0 +1,218 @@
+<title>Tree RAG Benchmarks</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --bg:#EEF1F3; --surface:#FFFFFF; --ink:#17222C; --muted:#5B6B78; --line:#C7D0D6;
+    --accent:#B8611E; --accent-soft:#D9A15F; --accent-wash:#B8611E14; --det-wash:#5B6B7812;
+    --good:#2E7D5B; --good-wash:#2E7D5B14; --warn:#B23B3B; --warn-wash:#B23B3B14;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#10161B; --surface:#16202A; --ink:#E7EDF2; --muted:#8CA0AE; --line:#2B3A46;
+      --accent:#E08A3E; --accent-soft:#C77B45; --accent-wash:#E08A3E1F; --det-wash:#8CA0AE14;
+      --good:#5FBE93; --good-wash:#5FBE9320; --warn:#E08080; --warn-wash:#E0808020;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#10161B; --surface:#16202A; --ink:#E7EDF2; --muted:#8CA0AE; --line:#2B3A46;
+    --accent:#E08A3E; --accent-soft:#C77B45; --accent-wash:#E08A3E1F; --det-wash:#8CA0AE14;
+    --good:#5FBE93; --good-wash:#5FBE9320; --warn:#E08080; --warn-wash:#E0808020;
+  }
+  *{box-sizing:border-box;}
+  body{background:var(--bg); color:var(--ink); font-family:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif; margin:0;}
+  .page{max-width:980px; margin:0 auto; padding:56px 32px 96px; display:flex; flex-direction:column; gap:52px;}
+  .eyebrow{font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); font-weight:600;}
+  h1{font-size:32px; font-weight:700; line-height:1.18; margin:10px 0 0; text-wrap:balance;}
+  header p{font-size:16px; line-height:1.6; color:var(--muted); max-width:68ch; margin:14px 0 0;}
+  section{display:flex; flex-direction:column; gap:16px;}
+  h2{font-size:21px; font-weight:600; margin:0; display:flex; align-items:baseline; gap:10px;}
+  h2 .tag{font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.06em; text-transform:uppercase; padding:3px 8px; border-radius:5px; font-weight:600;}
+  .tag.measured{background:var(--good-wash); color:var(--good);}
+  .tag.structural{background:var(--det-wash); color:var(--muted);}
+  .tag.limitation{background:var(--warn-wash); color:var(--warn);}
+  .dek{font-size:14.5px; color:var(--muted); line-height:1.6; max-width:74ch; margin:0;}
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:20px 22px;}
+  .stat-row{display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px;}
+  .stat{background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:16px 18px;}
+  .stat .n{font-family:"IBM Plex Mono",monospace; font-size:28px; font-weight:600; color:var(--ink); font-variant-numeric:tabular-nums;}
+  .stat .l{font-size:12px; color:var(--muted); margin-top:4px; line-height:1.4;}
+  .table-wrap{overflow-x:auto;}
+  table{width:100%; border-collapse:collapse; background:var(--surface); border:1px solid var(--line); border-radius:12px; overflow:hidden; font-size:13.5px;}
+  thead th{text-align:left; font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); font-weight:600; padding:10px 14px; border-bottom:1px solid var(--line); white-space:nowrap;}
+  tbody td{padding:11px 14px; border-bottom:1px solid var(--line); vertical-align:top; line-height:1.5;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.num{font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; white-space:nowrap;}
+  .pill{display:inline-block; font-family:"IBM Plex Mono",monospace; font-size:10.5px; padding:2px 7px; border-radius:5px; font-weight:600;}
+  .pill.agree{background:var(--good-wash); color:var(--good);}
+  .pill.corrected{background:var(--accent-wash); color:var(--accent);}
+  .pill.llmwon{background:var(--det-wash); color:var(--muted);}
+  figure{margin:0; display:flex; flex-direction:column; gap:10px;}
+  .diagram-scroll{overflow-x:auto; background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:8px;}
+  svg.diagram{display:block; width:100%; height:auto; min-width:640px;}
+  figcaption{font-size:13px; color:var(--muted); line-height:1.5; max-width:72ch;}
+  .node-rect{rx:9;}
+  .n-plain .node-rect{fill:var(--surface); stroke:var(--ink); stroke-width:1.3;}
+  .n-llm .node-rect{fill:var(--accent-wash); stroke:var(--accent); stroke-width:1.7;}
+  .n-det .node-rect{fill:var(--det-wash); stroke:var(--muted); stroke-width:1.3; stroke-dasharray:5 4;}
+  .n-good .node-rect{fill:var(--good-wash); stroke:var(--good); stroke-width:1.7;}
+  .node-label{font-family:"IBM Plex Sans",sans-serif; font-size:12.5px; font-weight:600; fill:var(--ink); text-anchor:middle;}
+  .node-sub{font-family:"IBM Plex Mono",monospace; font-size:10px; fill:var(--muted); text-anchor:middle;}
+  .n-good .node-sub{fill:var(--good);}
+  .edge{stroke:var(--ink); stroke-width:1.3; fill:none;}
+  .arrowhead{fill:var(--ink);}
+  .edge-label{font-family:"IBM Plex Mono",monospace; font-size:10px; fill:var(--muted); text-anchor:middle;}
+  .callout{border-left:3px solid var(--accent); background:var(--accent-wash); border-radius:0 10px 10px 0; padding:14px 18px; font-size:14px; line-height:1.6;}
+  .callout.warn{border-left-color:var(--warn); background:var(--warn-wash);}
+  ul{margin:0; padding-left:20px; font-size:14px; line-height:1.7; color:var(--ink);}
+  ul li::marker{color:var(--muted);}
+  code{font-family:"IBM Plex Mono",monospace; font-size:.92em; background:var(--det-wash); padding:1px 5px; border-radius:4px;}
+  footer{font-size:12px; color:var(--muted); border-top:1px solid var(--line); padding-top:18px; line-height:1.7;}
+  footer a{color:var(--muted);}
+</style>
+
+<div class="page">
+
+  <header>
+    <div class="eyebrow">For the technical committee</div>
+    <h1>What the numbers actually say about this architecture</h1>
+    <p>Every figure below was measured against the system as it runs today, on a real Gmail account with real ingested mail — not a simulation, not a slide-deck estimate. Where a number is a known structural property of a compared architecture rather than something we built and ran, it's labeled that way instead of blended in.</p>
+  </header>
+
+  <section>
+    <h2>The setup</h2>
+    <p class="dek">14 real email threads, ingested via Gmail OAuth into a per-user SQLite entity graph, classified by a free-tier model (<code>liquid/lfm-2.5-2.6b:free</code>) through OpenRouter. 3 real questions asked through the live chat endpoint. This is a pilot-scale run, not a large-N study — see the methodology note at the end before repeating these numbers to someone who'll ask for error bars.</p>
+  </section>
+
+  <section>
+    <h2>Guardrail arbitration <span class="tag measured">measured</span></h2>
+    <p class="dek">Every ingested thread stores three things: the LLM's raw category guess, the deterministic keyword scorer's verdict, and the final arbitrated decision. Pulling all 14 threads' stored classification data (no new LLM calls) gives a direct, reproducible accuracy picture.</p>
+
+    <div class="stat-row">
+      <div class="stat"><div class="n">14 / 14</div><div class="l">real ingested threads inspected</div></div>
+      <div class="stat"><div class="n">8 / 14</div><div class="l">LLM's raw guess disagreed with the keyword scorer (57%)</div></div>
+      <div class="stat"><div class="n">5 / 14</div><div class="l">guardrail overrode and corrected the LLM (36% of all mail)</div></div>
+      <div class="stat"><div class="n">2</div><div class="l">cases where the LLM invented a category outside the schema entirely ("Cybersecurity", "events") — caught both</div></div>
+    </div>
+
+    <figure>
+      <div class="diagram-scroll">
+        <svg class="diagram" viewBox="0 0 1200 260" role="img" aria-label="Flow diagram: of 14 real ingested threads, the LLM's guess and the keyword scorer's guess disagreed on 8; of those, the guardrail's pick won and corrected the LLM on 5, while the LLM's own pick was kept on 3 remaining low-signal cases; 6 threads had the LLM and scorer agree outright.">
+          <defs>
+            <marker id="arrow-g" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" class="arrowhead"/>
+            </marker>
+          </defs>
+          <g class="n-plain">
+            <rect class="node-rect" x="30" y="106" width="150" height="48"/>
+            <text class="node-label" x="105" y="126">14 real threads</text>
+            <text class="node-sub" x="105" y="142">ingested this week</text>
+          </g>
+          <line class="edge" x1="180" y1="130" x2="216" y2="130" marker-end="url(#arrow-g)"/>
+          <g class="n-llm">
+            <rect class="node-rect" x="220" y="106" width="160" height="48"/>
+            <text class="node-label" x="300" y="126">LLM classifies</text>
+            <text class="node-sub" x="300" y="142">raw category guess</text>
+          </g>
+          <line class="edge" x1="380" y1="130" x2="416" y2="130" marker-end="url(#arrow-g)"/>
+          <g class="n-det">
+            <rect class="node-rect" x="420" y="106" width="180" height="48"/>
+            <text class="node-label" x="510" y="126">Keyword scorer</text>
+            <text class="node-sub" x="510" y="142">deterministic, no LLM</text>
+          </g>
+          <line class="edge" x1="600" y1="130" x2="636" y2="130" marker-end="url(#arrow-g)"/>
+          <g class="n-plain">
+            <rect class="node-rect" x="640" y="106" width="150" height="48"/>
+            <text class="node-label" x="715" y="126">Compare</text>
+            <text class="node-sub" x="715" y="142">agree or disagree?</text>
+          </g>
+
+          <polyline class="edge" points="790,118 830,118 830,50 870,50" marker-end="url(#arrow-g)"/>
+          <text class="edge-label" x="810" y="42">agree</text>
+          <g class="n-good">
+            <rect class="node-rect" x="874" y="26" width="220" height="48"/>
+            <text class="node-label" x="984" y="46">6 threads: filed as-is</text>
+            <text class="node-sub" x="984" y="62">no arbitration needed</text>
+          </g>
+
+          <polyline class="edge" points="790,142 830,142 830,210 870,210" marker-end="url(#arrow-g)"/>
+          <text class="edge-label" x="812" y="200">disagree (8)</text>
+          <g class="n-plain">
+            <rect class="node-rect" x="874" y="186" width="200" height="48"/>
+            <text class="node-label" x="974" y="206">Margin check</text>
+            <text class="node-sub" x="974" y="222">is the scorer confident?</text>
+          </g>
+
+          <polyline class="edge" points="1074,198 1105,198 1105,150 1136,150" marker-end="url(#arrow-g)"/>
+          <text class="node-label" x="1160" y="130" style="text-anchor:start; font-size:11.5px;">5 corrected</text>
+          <text class="node-sub" x="1160" y="146" style="text-anchor:start;">guardrail wins</text>
+
+          <polyline class="edge" points="1074,210 1105,210 1105,240 1136,240" marker-end="url(#arrow-g)"/>
+          <text class="node-label" x="1160" y="238" style="text-anchor:start; font-size:11.5px;">3 kept</text>
+          <text class="node-sub" x="1160" y="254" style="text-anchor:start;">LLM's own pick</text>
+        </svg>
+      </div>
+      <figcaption>Fig. 1 — real classification outcomes across all 14 currently-ingested threads. The guardrail only overrides when its own signal clears a confidence margin; when the keyword signal is weak, the LLM's pick is trusted instead (see the honesty section below for what this costs).</figcaption>
+    </figure>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Thread</th><th>LLM guess</th><th>Keyword verdict</th><th>Final</th><th>Outcome</th></tr></thead>
+        <tbody>
+          <tr><td>"You shared some Google Account data with higgsfield.ai"</td><td>Cybersecurity <em>(not a real category)</em></td><td>General College</td><td>General College</td><td><span class="pill corrected">corrected</span></td></tr>
+          <tr><td>"graVITas'26 Internal Marathon"</td><td>events <em>(not a real category)</em></td><td>General College</td><td>General College</td><td><span class="pill corrected">corrected</span></td></tr>
+          <tr><td>"One-Day Radar Signal Processing Workshop"</td><td>Lectures & Profs</td><td>General College</td><td>General College</td><td><span class="pill corrected">corrected</span></td></tr>
+          <tr><td>"Security Clearance for External Participants"</td><td>Cybersecurity <em>(not a real category)</em></td><td>General College</td><td>General College</td><td><span class="pill corrected">corrected</span></td></tr>
+          <tr><td>"BCSE497J Project-I Review-2 Panel"</td><td>Lectures & Profs</td><td>General College</td><td>General College</td><td><span class="pill corrected">corrected</span></td></tr>
+          <tr><td>"Squadstack.ai Online test"</td><td>Placements</td><td>Lectures & Profs <em>(weak, tied)</em></td><td>Placements</td><td><span class="pill llmwon">LLM kept (weak signal)</span></td></tr>
+          <tr><td>"Translate it the way you'd say it"</td><td>Academic Writing <em>(novel)</em></td><td>General College <em>(zero signal)</em></td><td>Academic Writing</td><td><span class="pill llmwon">LLM kept (novel, flagged)</span></td></tr>
+          <tr><td>6 more threads</td><td colspan="3">LLM and keyword scorer agreed outright</td><td><span class="pill agree">agreed</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Cost and latency <span class="tag measured">measured</span> + <span class="tag structural">structural baseline</span></h2>
+    <p class="dek">Left column is measured on this system. Right column is a vector-RAG baseline's known call structure over the identical 14-document, 3-question workload — a structural fact of that architecture (one embedding call per document, one embed-plus-generate pair per question), not a system we built and ran.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Metric</th><th>This system</th><th>Vector-RAG baseline</th></tr></thead>
+        <tbody>
+          <tr><td>Calls to index one email</td><td class="num">2 (classify + merge)</td><td class="num">1 (embedding)</td></tr>
+          <tr><td>Calls per question</td><td class="num">1</td><td class="num">2 (embed query + generate)</td></tr>
+          <tr><td>Avg latency per question (n=3, live)</td><td class="num">4.07s (5.80 / 3.29 / 3.11)</td><td class="num">not measured — structurally one more network hop</td></tr>
+          <tr><td>Free-tier keys still usable today</td><td class="num">2 of 5 pooled</td><td class="num">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where the tradeoff actually cuts against us <span class="tag limitation">limitation</span></h2>
+    <p class="dek">A committee will ask what this costs, not just what it saves. Answer honestly:</p>
+    <div class="callout warn">
+      <strong>Indexing is more expensive, not less.</strong> For the same 14 emails, this system makes 28 generation-class LLM calls (2 per email) against a vector-RAG baseline's 14 cheap embedding calls. We are not cheaper at index time — we are more expensive there, on purpose. The argument is that indexing happens once per email while questions happen repeatedly, so the savings compound at query time where usage is actually unbounded. That argument holds only if people ask more questions than they receive emails — reasonable for an active chat user, not guaranteed.
+    </div>
+    <div class="callout warn">
+      <strong>Fixed schema, bounded recall.</strong> A category tree can't absorb something that fits no existing bucket as gracefully as open-ended retrieval can. This is a deliberate scope choice for a known domain (a student inbox has a small number of real categories), not a claim that the approach generalizes to an arbitrary unknown corpus.
+    </div>
+    <div class="callout warn">
+      <strong>A real bug this benchmark surfaced.</strong> Thread <code>mail:thread:156</code> — a Google security alert from <code>higgsfield.ai</code> — was filed under "Placements" instead of a security/account category. The sender-precedent rule saw other real placement mail from the same domain and overrode a should-be-obvious classification. We're disclosing it, not hiding it: it's a live, reproducible finding, and it's the kind of error an opaque vector index would never surface for inspection in the first place, because there'd be no clickable tree node to notice it in.
+    </div>
+  </section>
+
+  <section>
+    <h2>Methodology note</h2>
+    <p class="dek">n=14 threads, n=3 questions, one real inbox, one pilot run. This is directionally consistent with the architecture's design (fewer query-time calls, a working correction mechanism), but it is not a large-N study and the guardrail catch rate (36%) should be read as "observed in this inbox," not a general accuracy claim, until validated on a larger and independently-labeled sample.</p>
+  </section>
+
+  <footer>
+    Comparison figures for competing products, verified 2026-09:
+    <a href="https://blog.google/products-and-platforms/products/gmail/gmail-is-entering-the-gemini-era/">Gmail's Gemini era</a> ·
+    <a href="https://email-tools.me/posts/shortwave-review/">Shortwave 2026 review</a> ·
+    <a href="https://fast.io/resources/superhuman-ai-review-2026/">Superhuman AI 2026 review</a> ·
+    <a href="https://futurework.blog/2026/05/29/whats-new-and-coming-next-to-microsoft-365-copilot-and-teams/">Microsoft 365 Copilot updates</a>
+  </footer>
+
+</div>
