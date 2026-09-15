@@ -9,6 +9,7 @@ action-item worklists, analytics, automation rules, and the Markdown tree export
 
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
@@ -305,7 +306,15 @@ def calendar_connect(user: CurrentUser) -> Any:
 
 def _callback_page(title: str, detail: str) -> HTMLResponse:
     """The page Google's redirect lands on. It is the user's own browser tab, not the app, so
-    it gets plain HTML telling them to go back — never JSON."""
+    it gets plain HTML telling them to go back — never JSON.
+
+    `detail` (and sometimes `title`) can carry request-derived text — the `error` query param
+    from oauth_callback, or an OAuthFlowError's message — so both are HTML-escaped before
+    interpolation. Unescaped, a crafted callback URL like `?error=<script>...` would execute
+    in this app's own origin when a victim opens the link.
+    """
+    title = html.escape(title)
+    detail = html.escape(detail)
     return HTMLResponse(
         f"""<!doctype html><meta charset="utf-8">
 <title>{title}</title>

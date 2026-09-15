@@ -108,7 +108,11 @@ def _load_oauth_credentials(user_id: str | int | None = None):
             f"Calendar access expired or was revoked — reconnect. ({exc})"
         ) from exc
 
-    token_path.write_text(creds.to_json(), encoding="utf-8")
+    # Owner-only (0o600): this file holds a live OAuth credential. write_text alone leaves the
+    # platform default, often world-readable.
+    fd = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(creds.to_json())
     return creds
 
 

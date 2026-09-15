@@ -180,8 +180,8 @@ def complete(state: str, code: str) -> tuple[int, str]:
 
     creds = flow.credentials
     token_path = service.token_path(user_id)
-    token_path.parent.mkdir(parents=True, exist_ok=True)
-    token_path.write_text(creds.to_json(), encoding="utf-8")
+    token_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _write_private(token_path, creds.to_json())
 
     # connected_at lets the UI warn *before* the 7-day refresh-token expiry rather than only
     # reporting failure after it. Cheap to record here, awkward to reconstruct later.
@@ -193,14 +193,24 @@ def complete(state: str, code: str) -> tuple[int, str]:
     return user_id, service_name
 
 
+def _write_private(path: Path, text: str) -> None:
+    """Write `text` to `path`, owner-only (0o600) — these files hold live OAuth credentials.
+    `write_text` alone leaves the platform default (often world-readable); an explicit low-
+    permission open closes that gap. mkdir's 0o700 on the parent directory covers the same
+    file on a machine with other local users."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
 def _write_meta(path: Path, meta: dict[str, Any]) -> None:
     import json
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     existing: dict[str, Any] = {}
     if path.exists():
         try:
             existing = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             existing = {}
-    path.write_text(json.dumps({**existing, **meta}), encoding="utf-8")
+    _write_private(path, json.dumps({**existing, **meta}))
