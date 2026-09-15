@@ -89,6 +89,14 @@ def test_run_iter_ingests_via_the_shared_pipeline_and_saves_last_ts(tmp_path, mo
             "new_topic": True,
         },
     )
+    # "Placements"/"interview"/"shortlisted" are confident for Placements via keywords, so
+    # classify_email is skipped and classify_topic_only runs instead -- mock it too so this
+    # test never hits the real API.
+    monkeypatch.setattr(
+        mail_ingest,
+        "classify_topic_only",
+        lambda message, findings, category_title, topics: {"topic": "T"},
+    )
     monkeypatch.setattr(
         mail_ingest,
         "merge_or_create_thread",

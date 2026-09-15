@@ -232,10 +232,29 @@ def test_reload_stream_emits_progress_per_email(client, monkeypatch):
             "new_topic": True,
         },
     )
+    # "Accenture" is confident for Placements via keywords, so classify_email is skipped for
+    # that email and classify_topic_only runs instead; the same sender on both emails can also
+    # short-circuit the merge decision straight to merge_into_known_thread (see
+    # _ingest_message) -- mock both so this test never hits the real API.
+    monkeypatch.setattr(
+        mail_ingest,
+        "classify_topic_only",
+        lambda e, f, category_title, topics: {"topic": "T"},
+    )
     monkeypatch.setattr(
         mail_ingest,
         "merge_or_create_thread",
         lambda e, f, x: {"action": "new", "merge_into_id": None, "summary": "s", "body": "b"},
+    )
+    monkeypatch.setattr(
+        mail_ingest,
+        "merge_into_known_thread",
+        lambda e, f, existing_thread: {
+            "action": "merge",
+            "merge_into_id": existing_thread["id"],
+            "summary": "s",
+            "body": "b",
+        },
     )
 
     res = client.post("/api/mail/reload/stream", json={"since_minutes": 60})

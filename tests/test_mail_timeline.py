@@ -128,8 +128,20 @@ def _fake_llm(monkeypatch, decision):
             "new_topic": True,
         },
     )
+    # "Accenture" in the subject is confident for Placements via keywords, so classify_email is
+    # skipped and classify_topic_only runs instead; a same-sender+topic second email then
+    # short-circuits straight past merge_or_create_thread to merge_into_known_thread (see
+    # _ingest_message) -- mock both too, so tests using this helper never hit the real API.
+    monkeypatch.setattr(
+        mail_ingest,
+        "classify_topic_only",
+        lambda email, findings, category_title, topics: {"topic": "Acme"},
+    )
     monkeypatch.setattr(
         mail_ingest, "merge_or_create_thread", lambda email, findings, existing: decision
+    )
+    monkeypatch.setattr(
+        mail_ingest, "merge_into_known_thread", lambda email, findings, existing_thread: decision
     )
 
 
@@ -224,11 +236,12 @@ def conn(tmp_path):
 
 def _seed_thread(conn, uid, title, events, received):
     topic = mail_ingest.ensure_topic(conn, "Placements", "Acme")
+    thread_id = f"mail:thread:{uid}"
     store.upsert(
         conn,
         "mail_thread",
         {
-            "source_id": f"mail:thread:{uid}",
+            "source_id": thread_id,
             "title": title,
             "body": "b",
             "source_uids": [uid],
@@ -239,7 +252,19 @@ def _seed_thread(conn, uid, title, events, received):
         summary="s",
         source=f"mail:{uid}",
     )
-    store.add_edge(conn, topic, f"mail:thread:{uid}", "contains")
+    store.add_edge(conn, topic, thread_id, "contains")
+    # Real ingest indexes each event via mail_ingest._index_dated_item as it's produced (see
+    # _ingest_message) — mirror that here so tests seeding events directly still populate the
+    # index mail_ask._format_dated_items now reads from.
+    for event in events:
+        mail_ingest._index_dated_item(
+            conn,
+            event,
+            thread_id=thread_id,
+            thread_title=title,
+            category="Placements",
+            topic="Acme",
+        )
 
 
 def test_mail_tree_threads_carry_category_topic_and_dates(conn):
@@ -267,25 +292,33 @@ def test_mail_tree_threads_carry_category_topic_and_dates(conn):
 
 
 def test_dated_items_list_upcoming_and_overdue_but_not_old_events(conn):
+    # Distinct uids per event: the dated-items index is keyed by source_uid globally (one entry
+    # per real email, across the whole mailbox — see mail_ingest._index_dated_item), not scoped
+    # per thread the way merge_events is, so events on different threads sharing a uid would
+    # collide and overwrite each other in the index.
     _seed_thread(
         conn,
         "1",
         "Accenture OA",
-        [_event("2026-09-14", kind="deadline", title="OA")],
+        [_event("2026-09-14", kind="deadline", title="OA", uid="1")],
         "2026-09-10T09:00:00+00:00",
     )
     _seed_thread(
         conn,
         "2",
         "Scholarship",
-        [_event("2026-09-09", kind="deadline", title="Form")],
+        [_event("2026-09-09", kind="deadline", title="Form", uid="2")],
         "2026-09-01T09:00:00+00:00",
     )
     _seed_thread(
-        conn, "3", "Fest", [_event("2026-06-01", title="Fest day")], "2026-05-20T09:00:00+00:00"
+        conn,
+        "3",
+        "Fest",
+        [_event("2026-06-01", title="Fest day", uid="3")],
+        "2026-05-20T09:00:00+00:00",
     )
 
-    text = mail_ask._format_dated_items(mail_ask._walk_tree(conn), TODAY)
+    text = mail_ask._format_dated_items(conn, TODAY)
     lines = text.splitlines()
     assert lines[0].startswith("  OVERDUE DEADLINE 2026-09-09 (2 days ago): Form")
     assert lines[1].startswith("  SOON DEADLINE 2026-09-14 (in 3 days): OA")

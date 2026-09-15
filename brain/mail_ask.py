@@ -195,31 +195,37 @@ def _format_overview(rows: list[tuple[str, str, dict[str, Any]]]) -> str:
     return "\n".join(lines)
 
 
-def _format_dated_items(rows: list[tuple[str, str, dict[str, Any]]], today: date) -> str:
+def _format_dated_items(conn: Any, today: date) -> str:
     """Every overdue or upcoming event across the mailbox, soonest first.
 
-    The overview's one-liners and the BM25-expanded bodies can't answer "what's due this week":
-    that question shares no words with the emails it's about, so ranking never surfaces them.
+    Reads brain/mail_ingest.py's dated-items index (built once per event, at ingest time —
+    see mail_ingest._index_dated_item) instead of scanning every thread on every question. The
+    overview's one-liners and the BM25-expanded bodies can't answer "what's due this week" on
+    their own: that question shares no words with the emails it's about, so ranking never
+    surfaces them.
     """
     items: list[tuple[int, str]] = []
-    for cat, topic, thread in rows:
-        for event in mail_timeline.thread_timeline(thread)["events"]:
-            status = mail_timeline.thread_status({"events": [event]}, today)
-            days = status["days"]
-            if status["status"] == "past" and days is not None and days < -1:
-                continue
-            unit = "day" if abs(days) == 1 else "days"
-            when = (
-                "today" if days == 0 else f"in {days} {unit}" if days > 0 else f"{-days} {unit} ago"
+    for entry in store.all_of_type(conn, "mail_dated_item"):
+        d = entry.get("data") or {}
+        status = mail_timeline.thread_status(
+            {"events": [{"start": d.get("start"), "kind": d.get("kind")}]}, today
+        )
+        days = status["days"]
+        if days is None:
+            continue
+        if status["status"] == "past" and days < -1:
+            continue
+        unit = "day" if abs(days) == 1 else "days"
+        when = "today" if days == 0 else f"in {days} {unit}" if days > 0 else f"{-days} {unit} ago"
+        kind = "DEADLINE" if d.get("kind") == "deadline" else "EVENT"
+        items.append(
+            (
+                days,
+                f"  {status['status'].upper()} {kind} {str(d.get('start'))[:16]} ({when}): "
+                f'{d.get("title")} — from "{d.get("thread_title")}" '
+                f'[{d.get("category")} > {d.get("topic")}]',
             )
-            kind = "DEADLINE" if event.get("kind") == "deadline" else "EVENT"
-            items.append(
-                (
-                    days,
-                    f"  {status['status'].upper()} {kind} {event['start'][:16]} ({when}): "
-                    f'{event["title"]} — from "{thread["title"]}" [{cat} > {topic}]',
-                )
-            )
+        )
     items.sort(key=lambda item: item[0])
     lines = [line for _, line in items[:MAX_DATED_ITEMS]]
     return "\n".join(lines) or "(no dated items found in the mail)"
@@ -301,6 +307,7 @@ def _calendar_section(user_id: str | int | None) -> str:
 
 
 def build_prompt(
+    conn: Any,
     question: str,
     rows: list[tuple[str, str, dict[str, Any]]],
     top_threads: list[tuple[str, str, dict[str, Any]]],
@@ -316,7 +323,7 @@ def build_prompt(
     # Not named `profile`: that would shadow the imported brain.profile module.
     profile_block = _format_profile(profile_details)
     now = datetime.now()
-    dated = _format_dated_items(rows, now.date())
+    dated = _format_dated_items(conn, now.date())
     # A follow-up ranked too poorly to stand alone, so it is being answered from the thread the
     # conversation was already about. Without saying so, the model answers from DATED ITEMS and
     # the overview instead — "when is it due?" came back with every deadline in the mailbox.
@@ -327,15 +334,21 @@ def build_prompt(
         if follow_up_about
         else ""
     )
+    # Section order matters for prompt caching: everything above this point is identical across
+    # every question asked in one sitting (same day, same mail, same profile) — provider-side
+    # caching (confirmed live, see docs/pitch-notes-cost-analysis.md) only rewards a matching
+    # *prefix*, so the stable sections are grouped first and the per-question sections
+    # (follow-up note, matched threads, the question itself) come last, after everything that
+    # could break the match.
     return (
         f"{SYSTEM}\n\n"
         f"=== TODAY ===\n{now.strftime('%A, %Y-%m-%d')}\n\n"
-        f"{follow_up}"
         f"{_calendar_section(user_id)}"
         f"=== DATED ITEMS (deadlines and events, soonest first) ===\n{dated}\n\n"
         f"=== MAIL OVERVIEW (every thread, one line each) ===\n{overview}\n\n"
-        f"=== RELEVANT THREADS IN FULL ===\n{full}\n\n"
         f"=== ABOUT THE PERSON ASKING (optional context) ===\n{profile_block}\n\n"
+        f"{follow_up}"
+        f"=== RELEVANT THREADS IN FULL ===\n{full}\n\n"
         f"=== QUESTION ===\n{question}\n"
     )
 
@@ -448,7 +461,9 @@ def ask_mail(
         conn, question, rows, top_k=top_k, session_id=session_id
     )
     following = top_threads[0][2]["title"] if decision == "pinned" and top_threads else None
-    prompt = build_prompt(question, rows, top_threads, merged, user_id, follow_up_about=following)
+    prompt = build_prompt(
+        conn, question, rows, top_threads, merged, user_id, follow_up_about=following
+    )
     # Safety net, not a tuned cost cut — see call_openrouter's docstring. Worst real completion
     # observed for this call is 1,217 tokens; 4000 leaves wide headroom.
     reply = call_openrouter(prompt, max_tokens=4000)

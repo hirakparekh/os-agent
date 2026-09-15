@@ -156,6 +156,13 @@ def _fake_llm(monkeypatch, category, topic="Some Topic"):
             "new_topic": True,
         },
     )
+    # Only reached when the keyword scorer is already confident and classify_email is skipped
+    # (see _ingest_message) — still needs a mock so those tests don't hit the real API.
+    monkeypatch.setattr(
+        mail_ingest,
+        "classify_topic_only",
+        lambda email, findings, category_title, topics: {"topic": topic},
+    )
     monkeypatch.setattr(
         mail_ingest,
         "merge_or_create_thread",
@@ -164,6 +171,19 @@ def _fake_llm(monkeypatch, category, topic="Some Topic"):
             "merge_into_id": None,
             "summary": "s",
             "body": "b",
+        },
+    )
+    # Only reached when a header match or an unambiguous sender+topic precedent already answers
+    # merge-vs-new (see _ingest_message) — still needs a mock so those tests don't hit the API.
+    monkeypatch.setattr(
+        mail_ingest,
+        "merge_into_known_thread",
+        lambda email, findings, existing_thread: {
+            "action": "merge",
+            "merge_into_id": existing_thread["id"],
+            "summary": "s",
+            "body": "b",
+            "event": {"has_event": False, "title": "", "start": "", "end": "", "location": ""},
         },
     )
 
@@ -186,15 +206,115 @@ _YOGA_EMAIL = {
 def test_ingest_email_overrides_llm_category_with_confident_bm25_guess(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
     email = _email(uid="9", subject="Accenture Off-Campus Drive - interview shortlisted")
-    # LLM (wrongly) says Academics; the deterministic guess should override it to Placements.
-    _fake_llm(monkeypatch, "Academics", topic="Accenture")
+    # The keyword scorer is confident for this subject, so classify_email (the full
+    # category+topic call) must never run at all — only the smaller topic-only call does.
+    monkeypatch.setattr(
+        mail_ingest,
+        "classify_email",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("classify_email should be skipped")),
+    )
+    monkeypatch.setattr(
+        mail_ingest,
+        "classify_topic_only",
+        lambda email, findings, category_title, topics: {"topic": "Accenture"},
+    )
+    monkeypatch.setattr(
+        mail_ingest,
+        "merge_or_create_thread",
+        lambda email, findings, existing: {
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "s",
+            "body": "b",
+        },
+    )
     result = mail_ingest.ingest_email(conn, email, _defaults())
 
     assert result["category"] == "Placements"
-    assert result["confidence"] == "medium"  # confident keywords, disagreeing LLM
+    assert result["confidence"] == "high"  # confident keywords, LLM never asked about category
     assert store.get(conn, "mail:cat:placements") is not None
     assert store.get(conn, "mail:cat:academics") is None
     assert store.get(conn, result["thread_id"])["needs_review"] == 0
+
+
+def test_sender_topic_precedent_skips_the_topic_llm_call_when_unambiguous(tmp_path, monkeypatch):
+    conn = _conn(tmp_path)
+    subject = "Accenture Off-Campus Drive - interview shortlisted"
+    monkeypatch.setattr(
+        mail_ingest,
+        "classify_topic_only",
+        lambda email, findings, category_title, topics: {"topic": "Accenture"},
+    )
+    monkeypatch.setattr(
+        mail_ingest,
+        "merge_or_create_thread",
+        lambda email, findings, existing: {
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "s",
+            "body": "b",
+        },
+    )
+    first = _email(uid="20", subject=subject)
+    first["from"] = "hr@accenture.com"
+    mail_ingest.ingest_email(conn, first, _defaults())
+
+    # Second email, same sender: the LLM would be asked again, but this time it must never be
+    # called at all -- the sender already has exactly one topic on record in Placements.
+    def _fail(*a, **k):
+        raise AssertionError("classify_topic_only should be skipped")
+
+    monkeypatch.setattr(mail_ingest, "classify_topic_only", _fail)
+    # Same sender+topic precedent also short-circuits the merge decision (see _ingest_message)
+    # -- mock it too, so this test doesn't hit the real API for that call either.
+    monkeypatch.setattr(
+        mail_ingest,
+        "merge_into_known_thread",
+        lambda email, findings, existing_thread: {
+            "action": "merge",
+            "merge_into_id": existing_thread["id"],
+            "summary": "s",
+            "body": "b",
+        },
+    )
+    second = _email(uid="21", subject="Accenture - final round")
+    second["from"] = "hr@accenture.com"
+    result = mail_ingest.ingest_email(conn, second, _defaults())
+
+    assert result["topic"] == "Accenture"
+
+
+def test_sender_topic_precedent_does_not_apply_when_sender_has_split_topics(tmp_path):
+    # Unit-level: the full ingest pipeline locks in precedent from a sender's very first email
+    # (by design -- see the test above), so two DIFFERENT topics for one sender can only arise
+    # from something outside normal auto-filing, e.g. a human moving a thread by hand. Seed that
+    # state directly and check sender_topic_precedent correctly refuses to pick one over the
+    # other, rather than routing through ingest_email (which can't naturally reach this state).
+    conn = _conn(tmp_path)
+    topic_a = mail_ingest.ensure_topic(conn, "Placements", "Role A")
+    topic_b = mail_ingest.ensure_topic(conn, "Placements", "Role B")
+    for uid, topic_id in (("t1", topic_a), ("t2", topic_b)):
+        store.upsert(
+            conn,
+            "mail_thread",
+            {"source_id": f"mail:thread:gmail:{uid}"},
+            title=f"thread {uid}",
+            summary="",
+            source=f"mail:{uid}",
+        )
+        store.add_edge(conn, topic_id, f"mail:thread:gmail:{uid}", "contains")
+        thread = store.get(conn, f"mail:thread:gmail:{uid}")
+        thread["data"]["sender"] = "hr@accenture.com"
+        store.upsert(
+            conn,
+            "mail_thread",
+            {"source_id": f"mail:thread:gmail:{uid}", **thread["data"]},
+            title=thread["title"],
+            summary=thread["summary"],
+            source=thread["source"],
+        )
+
+    assert mail_ingest.sender_topic_precedent(conn, "hr@accenture.com", "Placements") is None
 
 
 def test_ingest_email_creates_category_topic_and_thread(tmp_path, monkeypatch):
@@ -264,7 +384,12 @@ def test_ingest_email_merges_second_related_email_into_same_thread(tmp_path, mon
             "body": "Round 1 interview.\nPPT on Wednesday.",
         },
     )
+    # A different sender: same-sender+same-topic precedent would otherwise short-circuit
+    # straight to merge_into_known_thread (see _ingest_message) before ever reaching this
+    # test's own merge_or_create_thread mock -- this test is specifically about that mock's
+    # merge behavior, not the precedent shortcut (covered separately).
     second_email = _email(uid="2", subject="PPT")
+    second_email["from"] = "recruiter2@acme.com"
     second = mail_ingest.ingest_email(conn, second_email, {"student_id": "", "resume_path": ""})
 
     assert second["thread_id"] == first["thread_id"]
@@ -418,7 +543,11 @@ def test_ingest_email_reclassified_thread_has_single_parent(tmp_path, monkeypatc
             "body": "Reclassified into Beta.",
         },
     )
+    # A different sender than the first email: hr@acme.com already has an unambiguous topic
+    # precedent ("Acme") in Placements, which would otherwise override this test's "Beta" mock
+    # and defeat its point — this test is about the single-parent edge invariant, not precedent.
     reclassified_email = _email(uid="2", subject="PPT")
+    reclassified_email["from"] = "hr@beta-corp.com"
     mail_ingest.ingest_email(conn, reclassified_email, {"student_id": "", "resume_path": ""})
 
     parents = store.neighbors(conn, thread_id, "contains", incoming=True)
@@ -480,15 +609,22 @@ def test_ingest_email_merge_preserves_title_and_accumulates_source(tmp_path, mon
     )
     first = mail_ingest.ingest_email(conn, _email(uid="1", subject="Round 1"), {})
 
+    # Same sender+topic precedent as the first email would otherwise short-circuit straight to
+    # merge_into_known_thread (see _ingest_message) -- mock it too, with the same payload, so
+    # this test's mocked merge result still applies either way.
+    merge_result = {
+        "action": "merge",
+        "merge_into_id": first["thread_id"],
+        "summary": "s2",
+        "body": "Round 1 interview.\nPPT on Wednesday.",
+    }
+    monkeypatch.setattr(
+        mail_ingest, "merge_or_create_thread", lambda email, findings, existing: merge_result
+    )
     monkeypatch.setattr(
         mail_ingest,
-        "merge_or_create_thread",
-        lambda email, findings, existing: {
-            "action": "merge",
-            "merge_into_id": first["thread_id"],
-            "summary": "s2",
-            "body": "Round 1 interview.\nPPT on Wednesday.",
-        },
+        "merge_into_known_thread",
+        lambda email, findings, existing_thread: merge_result,
     )
     mail_ingest.ingest_email(conn, _email(uid="2", subject="PPT"), {})
 
@@ -653,7 +789,9 @@ def test_ingest_off_campus_drive_email_is_still_placements(tmp_path, monkeypatch
     _fake_llm(monkeypatch, "General College", topic="Accenture")
     result = mail_ingest.ingest_email(conn, email, _defaults())
     assert result["category"] == "Placements"
-    assert result["confidence"] == "medium"
+    # Confident keywords skip the category LLM call entirely now, so this is "high", not a
+    # comparison against what the (never-asked) LLM would have said.
+    assert result["confidence"] == "high"
 
 
 def test_ingest_guest_lecture_email_is_lectures_and_profs(tmp_path, monkeypatch):
@@ -710,7 +848,10 @@ def test_ingest_records_classification_provenance(tmp_path, monkeypatch):
     result = mail_ingest.ingest_email(conn, dict(_YOGA_EMAIL), _defaults())
     recorded = store.get(conn, result["thread_id"])["data"]["classification"]
     assert recorded["category"] == "General College"
-    assert recorded["llm_category"] == "Placements"
+    # The keyword scorer is confident here, so classify_email is skipped and no LLM ever weighs
+    # in on category — recording "Placements" (classify_email's mocked answer) would falsely
+    # imply the LLM was asked and agreed/disagreed. None is the honest provenance.
+    assert recorded["llm_category"] is None
     assert recorded["keyword_category"] == "General College"
     assert "General College" in recorded["scores"]
 
@@ -720,8 +861,10 @@ def test_ingest_overridden_category_replaces_a_topic_echoing_the_llm_category(
 ):
     conn = _conn(tmp_path)
     email = _email(uid="11", subject="Accenture Off-Campus Drive - interview shortlisted")
-    # LLM says Academics AND names the topic "Academics" — meaningless once we override.
-    _fake_llm(monkeypatch, "Academics", topic="Academics")
+    # The keyword scorer is confident (Placements), so classify_topic_only is told that as a
+    # given fact — if it echoes it back as the topic too, that's meaningless, same as an LLM
+    # naming the topic after its own category used to be.
+    _fake_llm(monkeypatch, "Academics", topic="Placements")
     result = mail_ingest.ingest_email(conn, email, _defaults())
     assert result["category"] == "Placements"
     assert result["topic"] == "Accenture Off-Campus Drive - interview shortlisted"
@@ -1159,12 +1302,16 @@ def test_run_iter_counts_each_email_exactly_once(tmp_path, monkeypatch):
 
 def test_run_iter_names_the_email_being_worked_on(tmp_path, monkeypatch):
     conn = _conn(tmp_path)
+    # run_iter now sorts the batch by a free keyword category guess before processing (so
+    # same-category emails run back-to-back and share more of their prompt prefix for caching
+    # -- see run_iter's docstring/comment). "Yoga day" has no strong category keywords so its
+    # guess sorts before "Placements", which is why it runs first despite arriving second.
     _two_emails(monkeypatch, subjects=("Accenture drive", "Yoga day"))
     _fake_llm(monkeypatch, "Placements", topic="T")
 
     events = list(mail_ingest.run_iter(conn))
     starting = [e for e in events if e["stage"] == "ingesting"]
-    assert [e["subject"] for e in starting] == ["Accenture drive", "Yoga day"]
+    assert [e["subject"] for e in starting] == ["Yoga day", "Accenture drive"]
     # "ingesting" is emitted before the work, so its count is the *previous* completion.
     assert [e["done"] for e in starting] == [0, 1]
 
@@ -1332,6 +1479,26 @@ def test_two_identical_emails_from_one_sender_land_together(tmp_path, monkeypatc
         mail_ingest,
         "merge_or_create_thread",
         lambda e, f, x: {"action": "new", "merge_into_id": None, "summary": "s", "body": "b"},
+    )
+    # "new sign-in" is confident for Account Security via keywords, so classify_email is
+    # skipped for both emails (see comment below) -- classify_topic_only runs instead, and the
+    # second email's same-sender+topic precedent shortcuts straight past merge_or_create_thread
+    # to merge_into_known_thread (see _ingest_message). Mock both so this test never hits the
+    # real API.
+    monkeypatch.setattr(
+        mail_ingest,
+        "classify_topic_only",
+        lambda e, f, category_title, topics: {"topic": "Google Account"},
+    )
+    monkeypatch.setattr(
+        mail_ingest,
+        "merge_into_known_thread",
+        lambda e, f, existing_thread: {
+            "action": "merge",
+            "merge_into_id": existing_thread["id"],
+            "summary": "s",
+            "body": "b",
+        },
     )
 
     first = mail_ingest.ingest_email(conn, dict(alert), _defaults())
@@ -1539,6 +1706,14 @@ def test_ingest_message_is_channel_agnostic_and_merges_across_channels(tmp_path,
             "new_topic": True,
         },
     )
+    # The keyword scorer is confident for this subject (see the other Accenture Off-Campus
+    # Drive tests above), so classify_email is skipped and classify_topic_only runs instead —
+    # mock it too, with the same topic, so both channels still land under one topic node.
+    monkeypatch.setattr(
+        mail_ingest,
+        "classify_topic_only",
+        lambda message, findings, category_title, topics: {"topic": subject},
+    )
     monkeypatch.setattr(
         mail_ingest,
         "merge_or_create_thread",
@@ -1646,16 +1821,16 @@ def test_ingest_email_action_items_accumulate_across_merges(tmp_path, monkeypatc
 
     second = _email(uid="2", subject="Round 1")
     second["body_text"] = "Please reply by Wednesday with your dietary preference."
-    monkeypatch.setattr(
-        mail_ingest,
-        "merge_or_create_thread",
-        lambda message, findings, existing: {
-            "action": "merge",
-            "merge_into_id": first_result["thread_id"],
-            "summary": "s",
-            "body": "b",
-        },
-    )
+    # Same sender+topic precedent as email 1 would otherwise short-circuit straight to
+    # merge_into_known_thread (see _ingest_message) -- mock it too, with the same payload.
+    merge_result = {
+        "action": "merge",
+        "merge_into_id": first_result["thread_id"],
+        "summary": "s",
+        "body": "b",
+    }
+    monkeypatch.setattr(mail_ingest, "merge_or_create_thread", lambda m, f, e: merge_result)
+    monkeypatch.setattr(mail_ingest, "merge_into_known_thread", lambda m, f, et: merge_result)
     mail_ingest.ingest_email(conn, second, _defaults())
 
     thread = store.get(conn, first_result["thread_id"])
@@ -1729,3 +1904,148 @@ def test_ingest_message_collapses_a_duplicate_announcement_across_channels(tmp_p
     thread = store.get(conn, gmail_result["thread_id"])
     assert thread["data"]["source_uids"] == ["1", "1700000000.000200"]
     assert thread["data"]["body"] == body  # untouched, not re-synthesized
+
+
+# --- dated-items index -------------------------------------------------------------------
+
+
+def test_ingest_email_with_an_event_indexes_it_for_dated_items(tmp_path, monkeypatch):
+    """The "hotel key rack" index: a dated event gets its own indexed entry at ingest time, so
+    mail_ask can read it directly instead of re-scanning every thread per question.
+
+    Uses _fake_llm (mocks both classify_email and classify_topic_only) rather than mocking
+    classify_email alone: "Accenture" in the subject is a real Placements keyword, confident
+    enough to take the keyword-skip path (see _ingest_message), which calls classify_topic_only
+    instead -- leaving that unmocked would silently hit the real API.
+    """
+    conn = _conn(tmp_path)
+    _fake_llm(monkeypatch, "Placements", topic="Accenture")
+    monkeypatch.setattr(
+        mail_ingest,
+        "merge_or_create_thread",
+        lambda email, findings, existing: {
+            "action": "new",
+            "merge_into_id": None,
+            "summary": "s",
+            "body": "b",
+            "event": {
+                "has_event": True,
+                "kind": "deadline",
+                "title": "Application deadline",
+                "start": "2026-09-20",
+                "end": "",
+                "location": "",
+            },
+        },
+    )
+    email = _email(uid="30", subject="Accenture application")
+    result = mail_ingest.ingest_email(conn, email, _defaults())
+
+    indexed = store.all_of_type(conn, "mail_dated_item")
+    assert len(indexed) == 1
+    data = indexed[0]["data"]
+    assert data["title"] == "Application deadline"
+    assert data["start"] == "2026-09-20"
+    assert data["kind"] == "deadline"
+    assert data["thread_id"] == result["thread_id"]
+    assert data["category"] == "Placements"
+    assert data["topic"] == "Accenture"
+
+
+def test_ingest_email_without_an_event_indexes_nothing(tmp_path, monkeypatch):
+    conn = _conn(tmp_path)
+    _fake_llm(monkeypatch, "General College", topic="Newsletter")
+    mail_ingest.ingest_email(conn, _email(uid="31", subject="Weekly newsletter"), _defaults())
+
+    assert store.all_of_type(conn, "mail_dated_item") == []
+
+
+# --- reply-header threading ---------------------------------------------------------------
+
+
+def test_referenced_message_ids_reads_both_headers():
+    email = {"in_reply_to": "<a@x.com>", "references": "<b@x.com> <a@x.com>"}
+    assert mail_ingest._referenced_message_ids(email) == {"<a@x.com>", "<b@x.com>"}
+
+
+def test_referenced_message_ids_empty_for_a_forward():
+    # A forward starts a fresh Message-ID chain -- no In-Reply-To/References at all.
+    assert mail_ingest._referenced_message_ids({"in_reply_to": "", "references": ""}) == set()
+
+
+def test_find_thread_by_reply_headers_matches_a_known_message_id():
+    threads = [
+        {"id": "t1", "data": {"message_ids": ["<a@x.com>"]}},
+        {"id": "t2", "data": {"message_ids": ["<c@x.com>"]}},
+    ]
+    match = mail_ingest._find_thread_by_reply_headers({"in_reply_to": "<a@x.com>"}, threads)
+    assert match["id"] == "t1"
+
+
+def test_find_thread_by_reply_headers_none_for_a_forward():
+    threads = [{"id": "t1", "data": {"message_ids": ["<a@x.com>"]}}]
+    email = {"in_reply_to": "", "references": ""}
+    assert mail_ingest._find_thread_by_reply_headers(email, threads) is None
+
+
+def test_reply_headers_merge_deterministically_without_asking_the_llm_to_decide(
+    tmp_path, monkeypatch
+):
+    conn = _conn(tmp_path)
+    _fake_llm(monkeypatch, "Placements", topic="Accenture")
+    first = _email(uid="40", subject="Accenture interview - Round 1")
+    first["message_id"] = "<msg1@accenture.com>"
+    first_result = mail_ingest.ingest_email(conn, first, _defaults())
+
+    def _raise_if_called(*a, **k):
+        raise AssertionError("merge_or_create_thread should be skipped for a header-matched reply")
+
+    monkeypatch.setattr(mail_ingest, "merge_or_create_thread", _raise_if_called)
+    monkeypatch.setattr(
+        mail_ingest,
+        "merge_into_known_thread",
+        lambda email, findings, existing_thread: {
+            "action": "merge",
+            "merge_into_id": existing_thread["id"],
+            "summary": "s2",
+            "body": "Round 2 update: shortlisted for the technical round.",
+            "event": {"has_event": False, "title": "", "start": "", "end": "", "location": ""},
+        },
+    )
+    second = _email(uid="41", subject="Re: Accenture interview - Round 1")
+    second["body_text"] = "You have been shortlisted for the technical round."
+    second["in_reply_to"] = "<msg1@accenture.com>"
+    second["message_id"] = "<msg2@accenture.com>"
+    second_result = mail_ingest.ingest_email(conn, second, _defaults())
+
+    assert second_result["thread_id"] == first_result["thread_id"]
+    thread = store.get(conn, second_result["thread_id"])
+    assert thread["data"]["body"] == "Round 2 update: shortlisted for the technical round."
+    assert thread["data"]["message_ids"] == ["<msg1@accenture.com>", "<msg2@accenture.com>"]
+
+
+def test_forwarded_mail_does_not_falsely_header_match_and_still_asks_the_llm(tmp_path, monkeypatch):
+    # Isolating the header check specifically: a different sender for the forward, so the
+    # separate sender+topic precedent shortcut (also real, tested elsewhere) can't also explain
+    # a skip here -- this test is only about reply-header matching.
+    conn = _conn(tmp_path)
+    _fake_llm(monkeypatch, "Placements", topic="Accenture")
+    first = _email(uid="42", subject="Accenture interview - Round 1")
+    first["message_id"] = "<msg1@accenture.com>"
+    mail_ingest.ingest_email(conn, first, _defaults())
+
+    called = []
+    monkeypatch.setattr(
+        mail_ingest,
+        "merge_or_create_thread",
+        lambda email, findings, existing: called.append(True)
+        or {"action": "new", "merge_into_id": None, "summary": "s", "body": "b"},
+    )
+    # A genuine forward: no In-Reply-To/References at all, distinct new Message-ID, and a
+    # different sender (the person who forwarded it) so sender+topic precedent doesn't apply.
+    forwarded = _email(uid="43", subject="Fwd: Accenture interview - Round 1")
+    forwarded["from"] = "friend@gmail.com"
+    forwarded["message_id"] = "<msg3@gmail.com>"
+    mail_ingest.ingest_email(conn, forwarded, _defaults())
+
+    assert called == [True]

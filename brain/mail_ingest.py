@@ -561,6 +561,29 @@ def sender_precedent(conn: Any, sender: str) -> str | None:
     return votes.most_common(1)[0][0] if votes else None
 
 
+def sender_topic_precedent(conn: Any, sender: str, category_title: str) -> str | None:
+    """Where this sender's mail has landed within one category before, if unambiguous.
+
+    Topic assignment is an identity question ("which company/account is this"), not a judgment
+    call — a sender's own history inside this category is stronger evidence than asking the LLM
+    to guess again. Unambiguous only: a sender who has split across multiple topics in this
+    category before (e.g. two different roles) must not be force-merged into either.
+    """
+    address = _address_of(sender)
+    if not address:
+        return None
+    topic_prefix = f"mail:topic:{_slugify(category_title)}:"
+    topic_titles: set[str] = set()
+    for thread in store.all_of_type(conn, "mail_thread"):
+        data = thread.get("data") or {}
+        if _address_of(data.get("sender") or "") != address:
+            continue
+        for parent in store.neighbors(conn, thread["id"], "contains", incoming=True):
+            if parent["id"].startswith(topic_prefix):
+                topic_titles.add(parent["title"])
+    return topic_titles.pop() if len(topic_titles) == 1 else None
+
+
 def _is_confident(ranked: list[tuple[str, float]]) -> bool:
     """Whether the top category is far enough clear of the runner-up to overrule the LLM."""
     if not ranked or ranked[0][1] < MIN_ABSOLUTE_SCORE:
@@ -686,6 +709,40 @@ def classify_email(
     return json.loads(raw)
 
 
+def classify_topic_only(
+    email: dict[str, Any],
+    attachment_findings: list[dict[str, Any]],
+    category_title: str,
+    topics: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """LLM call: which topic within an already-known category does this email belong to?
+
+    Used instead of classify_email when the keyword scorer is already confident about the
+    category (see _is_confident) — the category is a given fact here, not a question, so the
+    prompt skips the full category list and the category-reasoning the full call would pay for.
+    """
+    topic_lines = (
+        "\n".join(f"- {t['title']}: {t.get('summary', '')}" for t in topics) or "(none yet)"
+    )
+    findings_text = (
+        "\n".join(f"- {f['file']} ({f['kind']}): {f['finding']}" for f in attachment_findings)
+        or "(none)"
+    )
+    prompt = (
+        f"You file one email into a knowledge tree. It already belongs to the CATEGORY "
+        f'"{category_title}". Pick the best-fitting TOPIC within it (a specific thing, e.g. a '
+        "company name or account). Prefer an existing topic; only propose a new one when "
+        "nothing existing fits.\n\n"
+        f"EXISTING TOPICS IN THIS CATEGORY:\n{topic_lines}\n\n"
+        f"EMAIL\nFrom: {email.get('from')}\nSubject: {email.get('subject')}\n"
+        f"Body: {email.get('body_text', '')[:2000]}\n"
+        f"Attachment findings:\n{findings_text}\n\n"
+        'Reply with ONLY this JSON object, nothing else:\n{"topic": "<name>"}'
+    )
+    raw = _strip_fences(call_openrouter(prompt, max_tokens=3000))
+    return json.loads(raw)
+
+
 def _reference_date(email: dict[str, Any]) -> str:
     """The email's own Date header, not "now" — ingest can run hours or days after an email
     arrived (a backlog catch-up), and relative phrases in the email ("this Friday", "tomorrow")
@@ -759,6 +816,81 @@ def merge_or_create_thread(
     # that's already sitting right there in the prompt.
     if result.get("action") == "new" and not (result.get("body") or "").strip():
         result["body"] = email.get("body_text", "")
+    return result
+
+
+def _referenced_message_ids(email: dict[str, Any]) -> set[str]:
+    """Message-IDs this email replies to, from its own In-Reply-To/References headers (see
+    brain/emailtool.py). References can carry a whole chain, space-separated; union both
+    headers since mail clients aren't fully consistent about which they populate, and either
+    alone is enough to identify a parent message."""
+    raw = f"{email.get('in_reply_to', '') or ''} {email.get('references', '') or ''}"
+    return set(re.findall(r"<[^<>\s]+>", raw))
+
+
+def _find_thread_by_reply_headers(
+    email: dict[str, Any], existing_threads: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """A thread this email is a reply within, per its own reply headers — not a guess. A real
+    mail client's In-Reply-To/References record which message this replies to; matching that
+    against message ids this pipeline has already seen is mechanical, not a judgment call. A
+    forward correctly matches nothing here (it starts a fresh Message-ID chain), which is why
+    this can only ever narrow the LLM's merge-vs-new question, never wrongly force a merge.
+    """
+    referenced = _referenced_message_ids(email)
+    if not referenced:
+        return None
+    for thread in existing_threads:
+        known_ids = set((thread.get("data") or {}).get("message_ids") or [])
+        if referenced & known_ids:
+            return thread
+    return None
+
+
+def merge_into_known_thread(
+    email: dict[str, Any],
+    attachment_findings: list[dict[str, Any]],
+    existing_thread: dict[str, Any],
+) -> dict[str, Any]:
+    """LLM call: fold a new email into an ALREADY-KNOWN thread. Only called once
+    _find_thread_by_reply_headers has deterministically matched a real reply chain, so there's
+    no merge-vs-new judgment left to make — smaller prompt than merge_or_create_thread: no
+    candidate list, no action/merge_into_id field to decide.
+    """
+    findings_text = (
+        "\n".join(f"- {f['file']} ({f['kind']}): {f['finding']}" for f in attachment_findings)
+        or "(none)"
+    )
+    prompt = (
+        "You maintain a knowledge node for one topic. This new email is a reply within an "
+        "existing conversation (confirmed by its own reply headers, not a guess) — write an "
+        "updated body that folds the new information into the existing one coherently (a "
+        "running picture, not a raw concatenation), and a fresh short summary.\n\n"
+        "Separately, decide whether this email describes something happening at a specific, "
+        "concrete date/time — an interview, exam, meeting, deadline, competition, festival, "
+        "or similar — as opposed to a vague or ongoing topic with no fixed occurrence. "
+        'Its kind is "deadline" when it\'s something the reader must do or submit by that date '
+        '(a form, fee, registration, assignment, application), otherwise "event". '
+        f"REFERENCE DATE (when this email was sent, for resolving 'tomorrow'/'this Friday'): "
+        f"{_reference_date(email)}.\n\n"
+        f"EXISTING NODE\nSummary: {existing_thread.get('summary', '')}\n\n"
+        f"NEW EMAIL\nFrom: {email.get('from')}\nSubject: {email.get('subject')}\n"
+        f"Body: {email.get('body_text', '')[:2000]}\n"
+        f"Attachment findings:\n{findings_text}\n\n"
+        "Reply with ONLY this JSON object, nothing else:\n"
+        '{"summary": "<routing digest, <=120 words>", '
+        '"body": "<full merged content>", '
+        '"event": {"has_event": true|false, "kind": "deadline"|"event", '
+        '"title": "<short event title, or empty>", '
+        '"start": "<YYYY-MM-DD, or YYYY-MM-DDTHH:MM:SS if a specific time is given; '
+        'empty if has_event is false>", '
+        '"end": "<same format, or empty to default to start + 1 hour>", '
+        '"location": "<or empty>"}}'
+    )
+    raw = _strip_fences(call_openrouter(prompt, max_tokens=6000))
+    result = json.loads(raw)
+    result["action"] = "merge"
+    result["merge_into_id"] = existing_thread["id"]
     return result
 
 
@@ -897,6 +1029,17 @@ def ensure_category(conn: Any, title: str) -> str:
         source="mail",
     )
     return cat_id
+
+
+def topics_under_category(conn: Any, category_title: str) -> list[dict[str, Any]]:
+    """Existing topics filed under one category — for classify_topic_only's prompt, so it only
+    sees the topics relevant to an already-decided category instead of the whole tree.
+
+    Topic ids embed the category slug (see ensure_topic), so this is a prefix filter, not a
+    graph walk.
+    """
+    prefix = f"mail:topic:{_slugify(category_title)}:"
+    return [t for t in store.all_of_type(conn, "mail_topic") if t["id"].startswith(prefix)]
 
 
 def ensure_topic(conn: Any, category_title: str, topic_title: str) -> str:
@@ -1172,6 +1315,47 @@ def _create_calendar_event_for_thread(
     return {"event_id": event_id, "title": title, "start": start, "end": end, "source_uid": uid}
 
 
+def _index_dated_item(
+    conn: Any,
+    event: dict[str, Any],
+    *,
+    thread_id: str,
+    thread_title: str,
+    category: str,
+    topic: str,
+) -> None:
+    """Write this event into the dated-items index at ingest time — the "hotel key rack": one
+    entry per date, pointing at the thread it belongs to. mail_ask's DATED ITEMS section reads
+    this directly instead of re-deriving it by scanning every thread on every single question
+    (see brain/mail_ask.py::_format_dated_items) — a Python-only cost today, but one that grows
+    with the mailbox and gets paid on every question forever if it isn't computed once here.
+
+    Keyed by source email uid, same dedup rule as mail_timeline.merge_events, so a retried
+    ingest of the same email updates this entry instead of duplicating it.
+    """
+    item_id = f"mail:event:{event['source_uid']}"
+    store.upsert(
+        conn,
+        "mail_dated_item",
+        {
+            "source_id": item_id,
+            "title": event["title"],
+            "start": event["start"],
+            "end": event.get("end"),
+            "kind": event.get("kind", "event"),
+            "location": event.get("location"),
+            "source_uid": event["source_uid"],
+            "thread_id": thread_id,
+            "thread_title": thread_title,
+            "category": category,
+            "topic": topic,
+        },
+        title=event["title"],
+        summary=f"{category} > {topic} — {thread_title}",
+        source=item_id,
+    )
+
+
 def ingest_email(
     conn: Any, email: dict[str, Any], config: dict[str, Any], user_id: str | int | None = None
 ) -> dict[str, Any]:
@@ -1222,31 +1406,60 @@ def _ingest_message(
         for name in config.get("seeded_categories", [])
         if name not in seeded_names
     ]
-    # Offline mode skips the LLM call entirely — arbitrate_category already tolerates a blank
-    # llm_category (falls back to the top keyword score, or "low" confidence with none).
-    classification = {} if offline else classify_email(message, findings, categories)
-
     subject = message.get("subject", "") or ""
-    llm_category = (classification.get("category") or "").strip()
-    # Fold in whatever this user has taught the classifier by correcting past mail.
+    # Fold in whatever this user has taught the classifier by correcting past mail. Run this
+    # BEFORE any LLM call: when it's already confident, arbitrate_category would pick this same
+    # category over the LLM's anyway (see _is_confident) — so there's no need to pay for the
+    # full classify_email call just to have it overridden. Skip straight to a smaller call that
+    # only asks for topic, with the category already given as fact. Same filing decision either
+    # way, just cheaper when the keyword vocabulary already knows the answer.
     ranked = score_categories(
         subject,
         message.get("body_text", "") or "",
         message.get("from", "") or "",
         config_with_learned(conn, config),
     )
-    cat_title, confidence = arbitrate_category(
-        llm_category,
-        ranked,
-        {c["title"] for c in categories},
-        sender_category=sender_precedent(conn, message.get("from", "") or ""),
-    )
+    if not offline and _is_confident(ranked):
+        cat_title, confidence = ranked[0][0], "high"
+        # Topic is an identity question ("which company/account"), not a judgment call — if
+        # this exact sender has exactly one topic on record in this category already, that's
+        # stronger evidence than a fresh LLM guess, and skips the call entirely.
+        precedent_topic = sender_topic_precedent(conn, message.get("from", "") or "", cat_title)
+        if precedent_topic:
+            classification = {"topic": precedent_topic}
+        else:
+            classification = classify_topic_only(
+                message, findings, cat_title, topics_under_category(conn, cat_title)
+            )
+        # classify_topic_only was told cat_title as a given fact, so a topic that just echoes it
+        # back is the same nonsense case the guard below exists for. No LLM ever weighed in on
+        # category here, so record that honestly rather than implying agreement that never
+        # happened.
+        llm_category = cat_title
+        llm_category_for_record = None
+    else:
+        # Offline mode skips the LLM call entirely — arbitrate_category already tolerates a
+        # blank llm_category (falls back to the top keyword score, or "low" confidence with
+        # none).
+        classification = {} if offline else classify_email(message, findings, categories)
+        llm_category = (classification.get("category") or "").strip()
+        llm_category_for_record = llm_category
+        cat_title, confidence = arbitrate_category(
+            llm_category,
+            ranked,
+            {c["title"] for c in categories},
+            sender_category=sender_precedent(conn, message.get("from", "") or ""),
+        )
+        # classify_email already spent the call and returned a topic guess, but sender
+        # precedent for topic is still stronger evidence when it exists — override it.
+        precedent_topic = sender_topic_precedent(conn, message.get("from", "") or "", cat_title)
     classification["category"] = cat_title
 
     # A topic the LLM picked while assuming a different category is often just a restatement of
     # that rejected category ("Academics"), which reads as nonsense once the category is
-    # corrected. Fall back to the subject line in that case.
-    topic_title = (classification.get("topic") or "").strip()
+    # corrected. Fall back to the subject line in that case. Sender precedent, when unambiguous,
+    # wins over both.
+    topic_title = precedent_topic or (classification.get("topic") or "").strip()
     if not topic_title or normalize(topic_title) == normalize(llm_category):
         topic_title = _clean_subject(subject)
     classification["topic"] = topic_title
@@ -1273,11 +1486,25 @@ def _ingest_message(
             "event": {"has_event": False, "title": "", "start": "", "end": "", "location": ""},
         }
     else:
-        decision = (
-            _offline_merge_or_create_thread(message, existing_threads)
-            if offline
-            else merge_or_create_thread(message, findings, existing_threads)
+        header_match = None if offline else _find_thread_by_reply_headers(message, existing_threads)
+        # Same identity signal as the topic override above: if this sender's mail already has
+        # exactly one thread on record under this exact topic, that's stronger evidence for
+        # "merge" than asking the LLM to judge it fresh — but only when there's exactly one
+        # candidate, so there's no ambiguity about which thread. Checked after header_match:
+        # a real reply chain is stronger evidence than sender+topic alone.
+        sender_match = (
+            existing_threads[0]
+            if not offline and not header_match and precedent_topic and len(existing_threads) == 1
+            else None
         )
+        if offline:
+            decision = _offline_merge_or_create_thread(message, existing_threads)
+        elif header_match:
+            decision = merge_into_known_thread(message, findings, header_match)
+        elif sender_match:
+            decision = merge_into_known_thread(message, findings, sender_match)
+        else:
+            decision = merge_or_create_thread(message, findings, existing_threads)
 
     # Validate against every real thread, not just this topic's existing_threads: a merge target
     # from a different topic is legitimate (reclassification), a fully hallucinated id is not.
@@ -1290,6 +1517,9 @@ def _ingest_message(
         uids = sorted({*prior_uids, message["uid"]})
         title = existing_thread["title"] if existing_thread else message.get("subject", "")
         source = ",".join(f"mail:{u}" for u in uids)
+        prior_message_ids = (
+            existing_thread["data"].get("message_ids", []) if existing_thread else []
+        )
     else:
         existing_thread = None
         # Gmail keeps its historical id shape (untouched, so existing data/tests still match);
@@ -1302,6 +1532,13 @@ def _ingest_message(
         uids = [message["uid"]]
         title = message.get("subject", "")
         source = f"mail:{message['uid']}"
+        prior_message_ids = []
+
+    # This message's own Message-ID, recorded so a later reply's In-Reply-To/References can
+    # match it deterministically (see _find_thread_by_reply_headers). Empty/missing for a
+    # message with no id at all -- never stored as a false entry.
+    this_message_id = (message.get("message_id") or "").strip()
+    message_ids = sorted({*prior_message_ids, *([this_message_id] if this_message_id else [])})
 
     # A thread the user has re-filed by hand stays where they put it. Without this, the next
     # message in that thread is scored afresh and reparent_thread drags the whole thread back —
@@ -1346,9 +1583,10 @@ def _ingest_message(
             u: existing_thread["created_at"] for u in existing_thread["data"].get("source_uids", [])
         }
     received_at = mail_timeline.merge_received(prior_received, message["uid"], message.get("date"))
+    new_event = mail_timeline.normalize_event(decision.get("event"), message["uid"])
     events = mail_timeline.merge_events(
         mail_timeline.thread_timeline(existing_thread)["events"] if existing_thread else [],
-        mail_timeline.normalize_event(decision.get("event"), message["uid"]),
+        new_event,
     )
 
     store.upsert(
@@ -1359,6 +1597,9 @@ def _ingest_message(
             "title": title,
             "body": decision["body"],
             "source_uids": uids,
+            # This thread's own messages' Message-IDs, so a later reply's In-Reply-To/
+            # References can find it deterministically (see _find_thread_by_reply_headers).
+            "message_ids": message_ids,
             # Which channel this thread's most recent message arrived on — a thread that's
             # merged across channels keeps whichever channel ingested last, which is fine
             # since it's display metadata (a badge), not used for any routing decision.
@@ -1385,7 +1626,7 @@ def _ingest_message(
             "classification": {
                 "category": cat_title,
                 "confidence": confidence,
-                "llm_category": llm_category or None,
+                "llm_category": llm_category_for_record or None,
                 "keyword_category": ranked[0][0] if ranked else None,
                 "scores": {name: round(score, 2) for name, score in ranked[:3]},
                 # Carried forward so the pin survives every later message in this thread.
@@ -1403,6 +1644,16 @@ def _ingest_message(
     )
     reparent_thread(conn, thread_id, topic_id)
     store.add_edge(conn, topic_id, thread_id, "contains")
+
+    if new_event:
+        _index_dated_item(
+            conn,
+            new_event,
+            thread_id=thread_id,
+            thread_title=title,
+            category=cat_title,
+            topic=topic_title,
+        )
 
     try:
         # Best-effort: a flaky Slack post must not fail the whole ingest, same rationale as
@@ -1491,6 +1742,26 @@ def run_iter(
     emails = fetch_unread_emails(since_minutes, user_id=user_id)
     total = len(emails)
     yield {"stage": "fetched", "total": total}
+
+    # Group by a cheap, free category guess (the keyword scorer, no LLM) before the expensive
+    # per-email loop. Each classify/merge call resends the current category's existing-topics
+    # list; grouping same-category emails back-to-back means consecutive calls share that text
+    # verbatim, which is exactly what provider-side prompt caching rewards (confirmed live —
+    # see docs/pitch-notes-cost-analysis.md). A stable sort keeps same-category emails in their
+    # original (chronological) order, so merge/thread logic — scoped to one topic regardless of
+    # batch order — is unaffected either way.
+    learned_config = config_with_learned(conn, config)
+
+    def _category_hint(email: dict[str, Any]) -> str:
+        ranked = score_categories(
+            email.get("subject", "") or "",
+            email.get("body_text", "") or "",
+            email.get("from", "") or "",
+            learned_config,
+        )
+        return ranked[0][0] if ranked else ""
+
+    emails = sorted(emails, key=_category_hint)
 
     results: list[dict[str, Any]] = []
     for index, email in enumerate(emails, start=1):

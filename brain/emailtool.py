@@ -386,6 +386,13 @@ def cmd_list(since_minutes: int | None = None, user_id: str | None = None):
                     "date": str(msg.get("Date", "")),
                     "body_text": _extract_body(msg),
                     "attachments": _save_attachments(uid, msg),
+                    # This message's own id, and what it's a reply to (if anything) — real,
+                    # mechanical reply-chain identity from the mail client itself, not a guess.
+                    # Empty for a forward (a forward starts a fresh Message-ID chain) or a
+                    # message with no thread history, which is the correct, honest result.
+                    "message_id": str(msg.get("Message-ID", "") or ""),
+                    "in_reply_to": str(msg.get("In-Reply-To", "") or ""),
+                    "references": str(msg.get("References", "") or ""),
                 }
             )
         print(json.dumps(results, ensure_ascii=False))
